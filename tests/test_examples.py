@@ -12,14 +12,48 @@ def test_example1():
     # es.print_series()
     # print(es.series.shape)
 
-    print(f"Windowed counts: {es.windowed_counts}")
-    wc_sol = np.array([[5, 2, 3, 4, 3, 2], [4, 5, 4, 1, 0, 0]])
-    np.testing.assert_array_equal(es.windowed_counts, wc_sol)
-
-    print(f"Warping directions: {es.warping_directions}")
-    # wd_sol = np.array([-3., -1., 1., 0., -1., -1.])
-    # np.testing.assert_array_equal(es.warping_directions, wd_sol)
-
-    print(f"Warped series:")
+    print("Series:")
     print(es.format_series())
+
+
+    es.compute_windowed_counts()
+    print(f"Windowed counts:\n{es.windowed_counts}")
+    wc_sol = np.array([[4.5, 3.0, 1., 2.0, 3.0, 2., 1., 1.5],
+                       [2.0, 2.5, 4., 2.5, 0.5, 0., 0., 0.0]])
+    np.testing.assert_array_almost_equal(es.windowed_counts, wc_sol)
+
+    es.compute_warping_directions()
+    print(f"Warping directions:\n{es.warping_directions}")
+    wd_sol = np.array([[-1.8, -2.1, -0.6,  1.2,  0.0, -1.2, -0.3,  0.6],
+                       [ 0.6,  1.2,  0.0, -2.1, -1.5, -0.3,  0.0,  0.0]])
+    np.testing.assert_array_almost_equal(es.warping_directions, wd_sol)
+
+    es.compute_warped_series()
+    print(f"Warped series:")
     print(es.format_warped_series())
+    ws_sol = (" A   |     |   B |     | A   |     |     |     |\n"
+              " A B |     |     |     | A   |     |     |     |\n"
+              " A   |     |   B |     | A   |     |     |     |\n"
+              " A   |     |   B |     | A   |     |     |     |\n"
+              " A   |     |   B |     |     |     |     | A   |\n")
+    np.equal(es.format_warped_series(), ws_sol)
+
+
+def test_example2():
+    print("")
+    fn = Path(__file__).parent / "rsrc" / "example1.txt"
+    es = EventSeries.from_file(fn, window=3)
+
+    for i, ws in enumerate(es.warp_yield(iterations=3)):
+        print(f"=== {i+1:>2} ===")
+        print(es.format_warped_series())
+
+
+def test_example3():
+    print("")
+    fn = Path(__file__).parent / "rsrc" / "example3.txt"
+    es = EventSeries.from_file(fn, window=3)
+
+    for i, ws in enumerate(es.warp_yield(iterations=3)):
+        print(f"=== {i+1:>2} ===")
+        print(es.format_warped_series())
