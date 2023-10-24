@@ -123,6 +123,12 @@ class EventSeries:
                     es.series[sei, evi, syi] = True
         return es
 
+    def compute_counts(self):
+        if self._warped_series is None:
+            self._warped_series = self.series
+        cnts = self._warped_series.sum(axis=0).T
+        return cnts
+
     def compute_windowed_counts(self):
         """
         Count over window and series
@@ -181,6 +187,17 @@ class EventSeries:
         # The warping direction only expresses the direction using the sign. The
         # number is the weight whether this move should be preferred. But every
         # move is just one step (otherwise it overshoots peaks).
+
+        # Only retain large enoug directions (depends on self.count_thr)
+        # self._warping_directions[~((self._warping_directions > 1) | (self._warping_directions < -1))] = 0
+
+        # Warping should not be beyond peak in gradients? Makes the
+        # symbols swap and will not converge
+        # We avoid contractions (this is when the gradients are pos and then neg)
+        conti = np.where(np.diff((self._warping_directions >= 0).astype(int)) == -1)
+        c = conti[1]
+        c += 1
+        self._warping_directions[conti] = 0
 
         self._versions[V_WD] += 1
         return self._warping_directions
@@ -255,6 +272,7 @@ class EventSeries:
 
             # Do realignment
             # TODO: Should original items sets be remembered or can they be merged
+            # TODO: Should it be allowed to merge two symbols (changes the counts)
             for i_from, i_to in path:
                 ws[sei, i_to, :] = ws[sei, i_to, :] | self.warped_series[sei, i_from, :]
 
@@ -297,3 +315,20 @@ class EventSeries:
                 s += "|"
             s += "\n"
         return s
+
+    def plot_directions(self, symbol=0):
+        import matplotlib.pyplot as plt
+        fig, axs = plt.subplots(nrows=2, ncols=1, sharex=True, figsize=(10, 4))
+        cnts = self.compute_counts()
+        cnts = cnts[symbol]
+        ax = axs[0]
+        ax.bar(list(range(len(cnts))), cnts, label="Counts")
+        ax.legend()
+        ax = axs[1]
+        ax.axhline(y=0, color='r', linestyle=':', alpha=0.3)
+        ax.axhline(y=1, color='b', linestyle=':', alpha=0.3)
+        ax.axhline(y=-1, color='b', linestyle=':', alpha=0.3)
+        ax.plot(self.windowed_counts[symbol], '-o', label="Counts (smoothed)")
+        ax.plot(self.warping_directions[symbol], '-o', label="Directions")
+        ax.legend()
+        return fig, axs
