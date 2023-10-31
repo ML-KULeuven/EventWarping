@@ -245,6 +245,7 @@ class EventSeries:
         return path
 
     def compute_warped_series(self):
+        """Warp events by maximally one step (left, right, or none)."""
         dir = self.warping_directions
         ws = np.zeros((self.nb_series, self.nb_events, self.nb_symbols), dtype=bool)
 
@@ -284,7 +285,8 @@ class EventSeries:
     def warped_series(self):
         if self._warped_series is not None:
             return self._warped_series
-        return self.compute_warped_series()
+        self._warped_series = self.series
+        return self._warped_series
 
     def print_series(self):
         print(self.series)

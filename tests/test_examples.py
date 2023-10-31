@@ -52,23 +52,42 @@ def test_example2():
 
 
 def test_example3():
+    # mpl.use('MacOSX')
     print("")
     fn = Path(__file__).parent / "rsrc" / "example3.txt"
     es = EventSeries.from_file(fn, window=3)
-
-    # for i, ws in enumerate(es.warp_yield(iterations=3)):
-    #     print(f"=== {i+1:>2} ===")
-    #     print(es.format_warped_series())
 
     print("=== 1 ===")
     es.compute_windowed_counts()
     es.compute_warping_directions()
     print(es.format_warped_series())
-    mpl.use('macosx')
     fig, axs = es.plot_directions(symbol=0)
     fig.savefig("/Users/wannes/Desktop/debug/gradients.png")
     es.compute_warped_series()
 
     print("=== 2 ===")
+    es.warp()
+    print(es.format_warped_series())
+
+
+def test_example4():
+    # mpl.use('MacOSX')
+    print("")
+    fn = Path(__file__).parent / "rsrc" / "example4.txt"
+    es = EventSeries.from_file(fn, window=3)
+
+    print("=== 1 ===")
+    es.compute_windowed_counts()
+    es.compute_warping_directions()
+    print(es.format_warped_series())
+    fig, axs = es.plot_directions(symbol=0)
+    fig.savefig("/Users/wannes/Desktop/debug/gradients.png")
+    es.compute_warped_series()
+
+    print("=== 2 ===")
+    es.warp()
+    print(es.format_warped_series())
+
+    print("=== 3 ===")
     es.warp()
     print(es.format_warped_series())
