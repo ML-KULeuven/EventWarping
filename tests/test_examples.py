@@ -3,8 +3,14 @@ import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from pathlib import Path
+import os
 
 from eventwarping.eventseries import EventSeries
+
+
+# If environment variable TESTDIR is set, save figures to this
+# directory, otherwise to the test directory
+directory = Path(os.environ.get('TESTDIR', Path(__file__).parent))
 
 
 def test_example1():
@@ -62,7 +68,7 @@ def test_example3():
     es.compute_warping_directions()
     print(es.format_warped_series())
     fig, axs = es.plot_directions(symbol=0)
-    fig.savefig("/Users/wannes/Desktop/debug/gradients.png")
+    fig.savefig(directory / "gradients.png")
     es.compute_warped_series()
 
     print("=== 2 ===")
@@ -81,7 +87,7 @@ def test_example4():
     es.compute_warping_directions()
     print(es.format_warped_series())
     fig, axs = es.plot_directions(symbol=0)
-    fig.savefig("/Users/wannes/Desktop/debug/gradients.png")
+    fig.savefig(directory / "gradients.png")
     es.compute_warped_series()
 
     print("=== 2 ===")
