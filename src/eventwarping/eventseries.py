@@ -165,6 +165,10 @@ class EventSeries:
 
         :return: warping directions (also stored in self.warping_directions)
         """
+        # If windowed_counts has not yet been recomputed, do so
+        if self._versions[V_WD] == self._versions[V_WC]:
+            self.compute_windowed_counts()
+
         # Setup up kernel
         # Smooth window to triple its size, a window on each side of the window
         # (but make sure it is uneven to be centered)
@@ -194,7 +198,7 @@ class EventSeries:
         # Warping should not be beyond peak in gradients? Makes the
         # symbols swap and will not converge
         # We avoid contractions (this is when the gradients are pos and then neg)
-        conti = np.where(np.diff((self._warping_directions >= 0).astype(int)) == -1)
+        conti = np.where(np.diff(np.sign(self._warping_directions)) == -2)
         c = conti[1]
         c += 1
         self._warping_directions[conti] = 0
@@ -246,6 +250,10 @@ class EventSeries:
 
     def compute_warped_series(self):
         """Warp events by maximally one step (left, right, or none)."""
+        # If warping_directions has not yet been recomputed, do so
+        if self._versions[V_WD] == self._versions[V_WS]:
+            self.compute_warping_directions()
+
         dir = self.warping_directions
         ws = np.zeros((self.nb_series, self.nb_events, self.nb_symbols), dtype=bool)
 
@@ -319,18 +327,29 @@ class EventSeries:
         return s
 
     def plot_directions(self, symbol=0):
+        import matplotlib as mpl
         import matplotlib.pyplot as plt
-        fig, axs = plt.subplots(nrows=2, ncols=1, sharex=True, figsize=(10, 4))
+        if type(symbol) is int:
+            symbol = {symbol}
+        elif type(symbol) is not set:
+            symbol = set(symbol)
+        fig, axs = plt.subplots(nrows=2, ncols=len(symbol), sharex=True, sharey='row', figsize=(5*len(symbol), 4))
         cnts = self.compute_counts()
-        cnts = cnts[symbol]
-        ax = axs[0]
-        ax.bar(list(range(len(cnts))), cnts, label="Counts")
-        ax.legend()
-        ax = axs[1]
-        ax.axhline(y=0, color='r', linestyle=':', alpha=0.3)
-        ax.axhline(y=1, color='b', linestyle=':', alpha=0.3)
-        ax.axhline(y=-1, color='b', linestyle=':', alpha=0.3)
-        ax.plot(self.windowed_counts[symbol], '-o', label="Counts (smoothed)")
-        ax.plot(self.warping_directions[symbol], '-o', label="Directions")
-        ax.legend()
+        # colors = mpl.cm.get_cmap().colors
+        colors = [c["color"] for c in mpl.rcParams["axes.prop_cycle"]]
+        for curidx, cursymbol in enumerate(symbol):
+            curcnts = cnts[cursymbol]
+            ax = axs[0, curidx] if len(symbol) > 1 else axs[0]
+            ax.set_title(f"Symbol {cursymbol}: {self.int2symbol.get(cursymbol, cursymbol)}")
+            ax.bar(list(range(len(curcnts))), curcnts, color=colors[0], label="Counts")
+            ax.plot(self.windowed_counts[cursymbol], '-o', color=colors[1], label="Counts (smoothed)")
+            if curidx == 0:
+                ax.legend()
+            ax = axs[1, curidx] if len(symbol) > 1 else axs[1]
+            ax.axhline(y=0, color='r', linestyle=':', alpha=0.3)
+            ax.axhline(y=1, color='b', linestyle=':', alpha=0.3)
+            ax.axhline(y=-1, color='b', linestyle=':', alpha=0.3)
+            ax.plot(self.warping_directions[cursymbol], '-o', color=colors[2], label="Directions")
+            if curidx == 0:
+                ax.legend()
         return fig, axs
