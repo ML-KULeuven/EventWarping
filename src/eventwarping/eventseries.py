@@ -1,5 +1,7 @@
 import numpy as np
+import numpy.typing as npt
 from scipy import signal
+from typing import Optional
 
 
 V_WC = 0  # Index for version of windowed counts
@@ -20,7 +22,7 @@ class EventSeries:
         if window % 2 == 0:
             raise ValueError(f"Argument window should be an uneven number.")
 
-        self.series = None  # shape = (nb_series, nb_events, nb_symbols)
+        self.series: Optional[npt.NDArray[np.int]] = None  # shape = (nb_series, nb_events, nb_symbols)
         self.intonly = intonly
         self.symbol2int = dict()
         self.int2symbol = dict()
@@ -31,7 +33,7 @@ class EventSeries:
         self.count_thr = 5  # expected minimal number of events
         self._windowed_counts = None
         self._warping_directions = None
-        self._warped_series = None
+        self._warped_series: Optional[npt.NDArray[np.int]] = None
         self._versions = [0, 0, 0]  # V_WC, V_WD, V_WS
 
     def reset(self):
@@ -87,11 +89,11 @@ class EventSeries:
         es.nb_series = len(sl)
         es.nb_events = max_events
         es.nb_symbols = max_int + 1
-        es.series = np.zeros((es.nb_series, es.nb_events, es.nb_symbols), dtype=bool)
+        es.series = np.zeros((es.nb_series, es.nb_events, es.nb_symbols), dtype=int)
         for sei, series in enumerate(sl):
             for evi, events in enumerate(series):
                 for symbol in events:
-                    es.series[sei, evi, symbol] = True
+                    es.series[sei, evi, symbol] = 1
         return es
 
     @classmethod
@@ -115,12 +117,12 @@ class EventSeries:
                 if len(series) > es.nb_events:
                     es.nb_events = len(series)
                 allseries.append(series)
-        es.series = np.zeros((es.nb_series, es.nb_events, es.nb_symbols), dtype=bool)
+        es.series = np.zeros((es.nb_series, es.nb_events, es.nb_symbols), dtype=int)
         for sei, series in enumerate(allseries):
             for evi, events in enumerate(series):
                 for symbol in events:
                     syi = es.symbol2int[symbol]
-                    es.series[sei, evi, syi] = True
+                    es.series[sei, evi, syi] = 1
         return es
 
     def compute_counts(self):
@@ -296,7 +298,7 @@ class EventSeries:
             # TODO: Should original items sets be remembered or can they be merged
             # TODO: Should it be allowed to merge two symbols (changes the counts)
             for i_from, i_to in path:
-                ws[sei, i_to, :] = ws[sei, i_to, :] | self.warped_series[sei, i_from, :]
+                ws[sei, i_to, :] = ws[sei, i_to, :] + self.warped_series[sei, i_from, :]
 
         self._warped_series = ws
         self._versions[V_WS] += 1
