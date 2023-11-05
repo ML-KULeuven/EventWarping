@@ -1,3 +1,5 @@
+import collections
+
 import numpy as np
 import numpy.typing as npt
 from scipy import signal
@@ -147,7 +149,7 @@ class EventSeries:
         wc[:, :sides] = wc[:, sides:sides+1]
         wc[:, -sides:] = wc[:, -sides-1:-sides]
         # Add without a window (otherwise the begin and end cannot differentiate)
-        c = self._warped_series.sum(axis=(0)).T
+        c = self._warped_series.sum(axis=0).T
         self._windowed_counts = np.add(wc, c) / 2
         self._versions[V_WC] += 1
         return self._windowed_counts
@@ -214,7 +216,8 @@ class EventSeries:
             return self._warping_directions
         return self.compute_warping_directions()
 
-    def _best_warped_path(self, cc):
+    @staticmethod
+    def _best_warped_path(cc):
         """
 
         :param cc: Cumulative Cost matrix
@@ -258,11 +261,9 @@ class EventSeries:
         if self._versions[V_WD] == self._versions[V_WS]:
             self.compute_warping_directions()
 
-        dir = self.warping_directions
         ws = np.zeros((self.nb_series, self.nb_events, self.nb_symbols), dtype=bool)
 
         for sei in range(self.nb_series):
-
             # Compute aggregated direction
             wss = self.warped_series[sei, :, :]
             wss = np.multiply(wss.T, self.warping_directions)
@@ -344,9 +345,11 @@ class EventSeries:
     def plot_directions(self, symbol=0):
         import matplotlib as mpl
         import matplotlib.pyplot as plt
-        if type(symbol) is int:
+        if type(symbol) is set:
+            pass
+        elif type(symbol) is int:
             symbol = {symbol}
-        elif type(symbol) is not set:
+        elif isinstance(symbol, collections.Iterable):
             symbol = set(symbol)
         fig, axs = plt.subplots(nrows=2, ncols=len(symbol), sharex=True, sharey='row', figsize=(5*len(symbol), 4))
         cnts = self.compute_counts()
