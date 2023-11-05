@@ -242,6 +242,8 @@ class EventSeries:
                 prev_c, cost = 1, cc[r, 1]
                 if cc[r, 2] < cost:
                     prev_c, cost = 2, cc[r, 2]
+                if cc[r, 0] < cost:
+                    prev_c, cost = 0, cc[r, 0]
             else:
                 raise Exception(f"{prev_c=}")
             path.append((r, r + prev_c - 1))
@@ -266,17 +268,28 @@ class EventSeries:
 
             # Dynamic programming with window size 3. We only allow a shift of one or zero.
             cc = np.zeros((self.nb_events, 3))  # cumulative cost
-            cc[0, 0] = np.inf  # first element cannot move backward
+            cc[0, 0] = np.inf   # First element cannot move backward
             cc[0, 1] = 0
-            cc[0, 2] = -wss[0]  # cost to move forward
+            cc[0, 2] = -wss[0]
             for i in range(1, len(wss)):
-                # backward
+                # Backward
+                #              Stay one behind
+                #              |           Move on back from diagonal
+                #              |           |             Cost to move backward is the positive gradient
                 cc[i, 0] = min(cc[i-1, 0], cc[i-1, 1]) + wss[i]
-                # stay
-                cc[i, 1] = min(cc[i-1, 0], cc[i-1, 1], cc[i-1, 2])
-                # forward
-                cc[i, 2] = min(cc[i-1, 1], cc[i-1, 2]) + -wss[i]
-            cc[len(wss) - 1, 2] = np.inf
+                # Stay
+                #              Move back to diagonal from one behind
+                #              |           Stay on diagonal
+                #              |           |           Move to diagonal from one ahead (thus stay)
+                #              |           |           |                Staying has no cost
+                cc[i, 1] = min(cc[i-1, 0], cc[i-1, 1], cc[i-1, 2])  # + 0
+                # Forward
+                #              Skip diagonal and move from one back for previous to one ahead for this one
+                #              |           Move one forward from diagonal
+                #              |           |           Stay one forward
+                #              |           |           |             Cost to move forward is the negative gradient
+                cc[i, 2] = min(cc[i-1, 0], cc[i-1, 1], cc[i-1, 2]) + -wss[i]
+            cc[len(wss) - 1, 2] = np.inf  # Last element cannot move forward
             path = self._best_warped_path(cc)
 
             # Do realignment

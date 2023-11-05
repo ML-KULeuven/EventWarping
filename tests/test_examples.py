@@ -86,12 +86,12 @@ def test_example4():
     print(es.format_warped_series())
     fig, axs = es.plot_directions(symbol={0, 1, 2, 3})
     fig.savefig(directory / "gradients.png")
+    plt.close(fig)
     es.compute_warped_series()
 
     print("=== 1 ===")
-    es.warp()
     print(es.format_warped_series())
 
-    # print("=== 2 ===")
-    # es.warp()
-    # print(es.format_warped_series())
+    ws_sol = (" A B     |         |         |     C D |\n"
+              " A B     |         |         |     C D |")
+    np.equal(es.format_warped_series(), ws_sol)
