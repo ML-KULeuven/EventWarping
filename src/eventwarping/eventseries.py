@@ -1,9 +1,10 @@
 import collections
+from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import numpy.typing as npt
 from scipy import signal
-from typing import Optional
 
 
 V_WC = 0  # Index for version of windowed counts
@@ -31,7 +32,7 @@ class EventSeries:
         self.int2symbol = dict()
         self.nb_series = 0
         self.nb_events = 0  # length of series
-        self.nb_symbols = 0
+        self.nb_symbols = 0  # maximal size of set
         self.window = window
         self.count_thr = 5  # expected minimal number of events
         self.rescale_power = 2  # Raise counts to this power and rescale
@@ -72,8 +73,18 @@ class EventSeries:
 
     @classmethod
     def from_setlistfile(cls, fn, window, intonly=False):
+        """Read a setlist file and create an eventwarping object.
+        A file where each line is a list of sets of symbols. Each set represents a time point.
+
+        :param fn: Filename or Path object
+        :param window: Window to smooth counts over
+        :param intonly: The symbols are represented by integers
+        :return: EventWarping object
+        """
         import ast
         data = list()
+        if type(fn) is str:
+            fn = Path(fn)
         with fn.open("r") as fp:
             for line in fp.readlines():
                 data.append(ast.literal_eval(line))
@@ -81,6 +92,13 @@ class EventSeries:
 
     @classmethod
     def from_setlist(cls, sl, window, intonly=False):
+        """Convert a setlist to an eventwarping object.
+
+        :param fn: Filename or Path object
+        :param window: Window to smooth counts over
+        :param intonly: The symbols are represented by integers
+        :return: EventWarping object
+        """
         es = EventSeries(window=window, intonly=intonly)
         if not intonly:
             raise AttributeError("Not yet supported")
@@ -141,8 +159,7 @@ class EventSeries:
         return cnts
 
     def compute_windowed_counts(self):
-        """
-        Count over window and series
+        """Count over window and series
 
         :return: Counts (also stored in self.windowed_counts)
         """
