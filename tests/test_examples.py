@@ -95,3 +95,21 @@ def test_example4():
     ws_sol = (" A B     |         |         |     C D |\n"
               " A B     |         |         |     C D |")
     np.equal(es.format_warped_series(), ws_sol)
+
+
+def test_example5():
+    print("")
+    fn = Path(__file__).parent / "rsrc" / "example5.txt"
+    es = EventSeries.from_file(fn, window=3)
+
+    print("=== 0 ===")
+    es.compute_windowed_counts()
+    es.compute_warping_directions()
+    print(es.format_warped_series())
+    fig, axs = es.plot_directions(symbol={0, 1, 2, 3})
+    fig.savefig(directory / "gradients.png")
+    plt.close(fig)
+    es.compute_warped_series()
+
+    print("=== 1 ===")
+    print(es.format_warped_series())

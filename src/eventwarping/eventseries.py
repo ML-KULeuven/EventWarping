@@ -7,8 +7,9 @@ from typing import Optional
 
 
 V_WC = 0  # Index for version of windowed counts
-V_WD = 1  # Index for version of warping directions
-V_WS = 2  # Index for version of warped series
+V_RC = 1  # Index for rescaled counts
+V_WD = 2  # Index for version of warping directions
+V_WS = 3  # Index for version of warped series
 
 
 class EventSeries:
@@ -33,16 +34,20 @@ class EventSeries:
         self.nb_symbols = 0
         self.window = window
         self.count_thr = 5  # expected minimal number of events
+        self.rescale_power = 2  # Raise counts to this power and rescale
+        self.rescale_active = True
         self._windowed_counts = None
+        self._rescaled_counts = None
         self._warping_directions = None
         self._warped_series: Optional[npt.NDArray[np.int]] = None
-        self._versions = [0, 0, 0]  # V_WC, V_WD, V_WS
+        self._versions = [0, 0, 0, 0]  # V_WC, V_RC, V_WD, V_WS
 
     def reset(self):
         self._windowed_counts = None
+        self._rescaled_counts = None
         self._warping_directions = None
         self._warped_series = None
-        self._versions = [0, 0, 0]
+        self._versions = [0, 0, 0, 0]
 
     def warp(self, iterations=1, restart=False):
         # TODO: nb iterations should be less than window?
@@ -50,6 +55,7 @@ class EventSeries:
             self.reset()
         for it in range(iterations):
             self.compute_windowed_counts()
+            self.compute_rescaled_counts()
             self.compute_warping_directions()
             self.compute_warped_series()
         return self.warped_series
@@ -59,6 +65,7 @@ class EventSeries:
             self.reset()
         for it in range(iterations):
             self.compute_windowed_counts()
+            self.compute_rescaled_counts()
             self.compute_warping_directions()
             self.compute_warped_series()
             yield self.warped_series
@@ -109,7 +116,7 @@ class EventSeries:
                 for events in line.split("|"):
                     events = events.strip()
                     if events != "":
-                        events = [e.strip() for e in events.strip().split(" ")]
+                        events = [e.strip() for e in events.strip().split(" ") if e.strip() != ""]
                         for event in events:
                             if event not in es.symbol2int:
                                 es.symbol2int[event] = es.nb_symbols
@@ -160,6 +167,32 @@ class EventSeries:
             return self._windowed_counts
         return self.compute_windowed_counts()
 
+    def compute_rescaled_counts(self):
+        """Rescale the counts such that for each symbol the counts add up to one.
+        The rescaling is done by first taking the power of the values to give peaks
+        more weight.
+        """
+        if self._versions[V_RC] == self._versions[V_WC]:
+            self.compute_windowed_counts()
+        if not self.rescale_active:
+            self._rescaled_counts = self._windowed_counts
+            return self._rescaled_counts
+
+        countsp = np.power(self.windowed_counts, self.rescale_power)
+        sums = countsp.sum(axis=1)
+        countsp = countsp / sums[:, np.newaxis]
+
+        self._rescaled_counts = countsp
+
+        self._versions[V_RC] += 1
+        return self._rescaled_counts
+
+    @property
+    def rescaled_counts(self):
+        if self._rescaled_counts is not None:
+            return self._rescaled_counts
+        return self.compute_rescaled_counts()
+
     def compute_warping_directions(self):
         """
         Directions in which each series time point should change.
@@ -170,8 +203,8 @@ class EventSeries:
         :return: warping directions (also stored in self.warping_directions)
         """
         # If windowed_counts has not yet been recomputed, do so
-        if self._versions[V_WD] == self._versions[V_WC]:
-            self.compute_windowed_counts()
+        if self._versions[V_WD] == self._versions[V_RC]:
+            self.compute_rescaled_counts()
 
         # Setup up kernel
         # Smooth window to triple its size, a window on each side of the window
@@ -182,16 +215,20 @@ class EventSeries:
         # kernel = np.ones(kernel_width) / kernel_width  # make sure to be uneven to be centered
 
         # Convolve kernel
-        countsf = np.zeros(self.windowed_counts.shape)
+        counts = self.rescaled_counts
+        countsf = np.zeros(counts.shape)
         for si in range(countsf.shape[0]):
-            countsf[si, :] = signal.convolve(self.windowed_counts[si, :], kernel, mode='same') / sum(kernel)
+            countsf[si, :] = signal.convolve(counts[si, :], kernel, mode='same') / sum(kernel)
         gradients = np.gradient(countsf, axis=1, edge_order=1)
 
         # Transform gradients into directions (and magnitude)
         # divide by 2 for the gradient function (edge_order=1)
         # divide by kernel_width for convolve function
-        part = self.count_thr / (2 * kernel_width)  # threshold
-        self._warping_directions = gradients / part
+        if not self.rescale_active:
+            part = self.count_thr / (2 * kernel_width)  # threshold
+            self._warping_directions = gradients / part
+        else:
+            self._warping_directions = gradients
         # The warping direction only expresses the direction using the sign. The
         # number is the weight whether this move should be preferred. But every
         # move is just one step (otherwise it overshoots peaks).
@@ -335,10 +372,10 @@ class EventSeries:
                                 s += " "
                             s += str(syi)
                         else:
-                            s += f"{self.int2symbol[syi]} "
+                            s += f"{self.int2symbol[syi]:>2}"
                     else:
                         s += "  "
-                s += "|"
+                s += " |"
             s += "\n"
         return s
 
@@ -351,19 +388,31 @@ class EventSeries:
             symbol = {symbol}
         elif isinstance(symbol, collections.Iterable):
             symbol = set(symbol)
-        fig, axs = plt.subplots(nrows=2, ncols=len(symbol), sharex=True, sharey='row', figsize=(5*len(symbol), 4))
+        if self.rescale_active:
+            nrows = 3
+        else:
+            nrows = 2
+        fig, axs = plt.subplots(nrows=nrows, ncols=len(symbol), sharex=True, sharey='row', figsize=(5*len(symbol), 4))
         cnts = self.compute_counts()
         # colors = mpl.cm.get_cmap().colors
         colors = [c["color"] for c in mpl.rcParams["axes.prop_cycle"]]
         for curidx, cursymbol in enumerate(symbol):
             curcnts = cnts[cursymbol]
-            ax = axs[0, curidx] if len(symbol) > 1 else axs[0]
+            axrow = 0
+            ax = axs[axrow, curidx] if len(symbol) > 1 else axs[axrow]
             ax.set_title(f"Symbol {cursymbol}: {self.int2symbol.get(cursymbol, cursymbol)}")
             ax.bar(list(range(len(curcnts))), curcnts, color=colors[0], label="Counts")
             ax.plot(self.windowed_counts[cursymbol], '-o', color=colors[1], label="Counts (smoothed)")
             if curidx == 0:
                 ax.legend()
-            ax = axs[1, curidx] if len(symbol) > 1 else axs[1]
+            axrow += 1
+            if self.rescale_active:
+                ax = axs[axrow, curidx] if len(symbol) > 1 else axs[axrow]
+                ax.plot(self.rescaled_counts[cursymbol], '-o', color=colors[3], label="Rescaled counts")
+                if curidx == 0:
+                    ax.legend()
+                axrow += 1
+            ax = axs[axrow, curidx] if len(symbol) > 1 else axs[axrow]
             ax.axhline(y=0, color='r', linestyle=':', alpha=0.3)
             ax.axhline(y=1, color='b', linestyle=':', alpha=0.3)
             ax.axhline(y=-1, color='b', linestyle=':', alpha=0.3)

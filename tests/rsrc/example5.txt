@@ -1,0 +1,2 @@
+A   C | B C | C | C D
+A B   |   C | C | C D
