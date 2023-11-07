@@ -23,7 +23,6 @@ def test_example1():
     print("Series:")
     print(es.format_series())
 
-
     es.compute_windowed_counts()
     print(f"Windowed counts:\n{es.windowed_counts}")
     wc_sol = np.array([[4.5, 3.0, 1., 2.0, 3.0, 2., 1., 1.5],

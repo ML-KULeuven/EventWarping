@@ -168,7 +168,11 @@ class EventSeries:
         """
         if self._warped_series is None:
             self._warped_series = self.series
-        w = np.lib.stride_tricks.sliding_window_view(self._warped_series, (self.nb_series, self.window), (0, 1))
+        # Only count occurrence of a symbol in a series once, even though
+        # we keep track of how many are merged.
+        ws = np.sign(self._warped_series)
+        # Sliding window to aggregate from neighbours
+        w = np.lib.stride_tricks.sliding_window_view(ws, (self.nb_series, self.window), (0, 1))
         sides = int((self.window - 1) / 2)
         wc = np.zeros((self.nb_symbols, self.nb_events))
         wc[:, sides:-sides] = w.sum(axis=(-2, -1))[0].T
@@ -197,8 +201,6 @@ class EventSeries:
         if not self.rescale_active:
             self._rescaled_counts = self._windowed_counts
             return self._rescaled_counts
-
-        # TODO counts should first be ones and zeros again instead of counts per serie before summing over all series
 
         # Normalize per symbol
         countsp = np.power(self.windowed_counts, self.rescale_power)
@@ -243,7 +245,7 @@ class EventSeries:
         # kernel = np.ones(kernel_width) / kernel_width  # make sure to be uneven to be centered
 
         # Convolve kernel
-        counts = self.rescaled_counts
+        counts = self._rescaled_counts
         countsf = np.zeros(counts.shape)
         for si in range(countsf.shape[0]):
             countsf[si, :] = signal.convolve(counts[si, :], kernel, mode='same') / sum(kernel)
@@ -269,8 +271,9 @@ class EventSeries:
         # We avoid contractions (this is when the gradients are pos and then neg)
         # TODO: why the second and not the closest to zero
         conti = np.where(np.diff(np.sign(self._warping_directions)) == -2)
-        c = conti[1]
-        c += 1
+        for idx, (r, c) in enumerate(zip(*conti)):
+            if abs(self._warping_directions[r, c]) > abs(self._warping_directions[r, c + 1]):
+                conti[1][idx] += 1
         self._warping_directions[conti] = 0
         # All zero crossings have inertia, you don't want to move them as they are already a peak
         self._warping_inertia = np.zeros(self._warping_directions.shape)
@@ -287,6 +290,12 @@ class EventSeries:
     def warping_directions(self):
         if self._warping_directions is not None:
             return self._warping_directions
+        return self.compute_warping_directions()
+
+    @property
+    def warping_inertia(self):
+        if self._warping_inertia is not None:
+            return self._warping_inertia
         return self.compute_warping_directions()
 
     @staticmethod
@@ -434,13 +443,15 @@ class EventSeries:
         if seriesidx is not None:
             nrows += 1
             wss = np.multiply(self.warped_series[seriesidx, :, :].T, self.warping_directions).sum(axis=0)
+            wsi = np.multiply(self.warped_series[seriesidx, :, :].T, self.warping_inertia).sum(axis=0)
         else:
             wss = None
+            wsi = None
         fig, axs = plt.subplots(nrows=nrows, ncols=len(symbol), sharex=True, sharey='row', figsize=(5*len(symbol), 4))
         cnts = self.compute_counts()
         # colors = mpl.cm.get_cmap().colors
         colors = [c["color"] for c in mpl.rcParams["axes.prop_cycle"]]
-        amp = np.max(np.abs(self.warping_directions[list(symbol)]))
+        # amp = np.max(np.abs(self.warping_directions[list(symbol)]))
         for curidx, cursymbol in enumerate(symbol):
             curcnts = cnts[cursymbol]
             # Counts
@@ -464,11 +475,9 @@ class EventSeries:
             ax.axhline(y=0, color='r', linestyle=':', alpha=0.3)
             # ax.axhline(y=1, color='b', linestyle=':', alpha=0.3)
             # ax.axhline(y=-1, color='b', linestyle=':', alpha=0.3)
-            if seriesidx is not None:
-                ax.plot(wss, '-+', color=colors[3], label=f"Agg directions ({seriesidx})")
-            ax.plot(self._warping_directions[cursymbol], '-o', color=colors[4], label="Directions")
-            ax.plot(self._warping_inertia[cursymbol], '-o', color=colors[5], label="Inertia")
-            ax.set_ylim(-amp, amp)
+            ax.plot(self._warping_directions[cursymbol], '-o', color=colors[3], label="Directions")
+            ax.plot(self._warping_inertia[cursymbol], '-o', color=colors[4], label="Inertia")
+            # ax.set_ylim(-amp, amp)
             if curidx == 0:
                 ax.legend(bbox_to_anchor=(-0.1, 1), loc='upper right')
             axrow += 1
@@ -476,7 +485,10 @@ class EventSeries:
             if seriesidx is not None:
                 ax = axs[axrow, curidx] if len(symbol) > 1 else axs[axrow]
                 cursymbol_cnts = self.warped_series[seriesidx, :, cursymbol]
-                ax.bar(range(len(cursymbol_cnts)), cursymbol_cnts)
+                ax.axhline(y=0, color='r', linestyle=':', alpha=0.3)
+                ax.bar(range(len(cursymbol_cnts)), cursymbol_cnts, label=f"Counts for series {seriesidx}")
+                ax.plot(wss, '-+', color=colors[3], label=f"Agg directions for series {seriesidx}")
+                ax.plot(wsi, '-+', color=colors[4], label=f"Agg Inertia for series {seriesidx}")
                 if curidx == 0:
                     ax.legend(bbox_to_anchor=(-0.1, 1), loc='upper right')
                 axrow += 1
