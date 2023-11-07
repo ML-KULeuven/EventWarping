@@ -36,10 +36,13 @@ class EventSeries:
         self.window = window
         self.count_thr = 5  # expected minimal number of events
         self.rescale_power = 2  # Raise counts to this power and rescale
+        self.rescale_weights = dict()  # Symbol idx to weight factor
         self.rescale_active = True
         self._windowed_counts = None
         self._rescaled_counts = None
         self._warping_directions = None
+        self._warping_inertia = None
+        self._zero_crossings = None
         self._warped_series: Optional[npt.NDArray[np.int]] = None
         self._versions = [0, 0, 0, 0]  # V_WC, V_RC, V_WD, V_WS
 
@@ -195,9 +198,17 @@ class EventSeries:
             self._rescaled_counts = self._windowed_counts
             return self._rescaled_counts
 
+        # TODO counts should first be ones and zeros again instead of counts per serie before summing over all series
+
+        # Normalize per symbol
         countsp = np.power(self.windowed_counts, self.rescale_power)
         sums = countsp.sum(axis=1)
+        sums[sums == 0.0] = 1.0
         countsp = countsp / sums[:, np.newaxis]
+
+        # Reweigh certain symbols
+        for symbol, weight in self.rescale_weights.items():
+            countsp[symbol, :] *= weight
 
         self._rescaled_counts = countsp
 
@@ -256,11 +267,19 @@ class EventSeries:
         # Warping should not be beyond peak in gradients? Makes the
         # symbols swap and will not converge
         # We avoid contractions (this is when the gradients are pos and then neg)
+        # TODO: why the second and not the closest to zero
         conti = np.where(np.diff(np.sign(self._warping_directions)) == -2)
         c = conti[1]
         c += 1
         self._warping_directions[conti] = 0
-
+        # All zero crossings have inertia, you don't want to move them as they are already a peak
+        self._warping_inertia = np.zeros(self._warping_directions.shape)
+        conti = np.where(self._warping_directions == 0.0)
+        for r, c in zip(*conti):
+            if c == 0 or c == self._warping_directions.shape[1] - 1:
+                continue
+            if self._warping_directions[r, c - 1] > 0 > self._warping_directions[r, c + 1]:
+                self._warping_inertia[r, c] = self._warping_directions[r, c - 1] - self._warping_directions[r, c + 1]
         self._versions[V_WD] += 1
         return self._warping_directions
 
@@ -315,13 +334,17 @@ class EventSeries:
         if self._versions[V_WD] == self._versions[V_WS]:
             self.compute_warping_directions()
 
-        ws = np.zeros((self.nb_series, self.nb_events, self.nb_symbols), dtype=bool)
+        ws = np.zeros((self.nb_series, self.nb_events, self.nb_symbols), dtype=int)
 
         for sei in range(self.nb_series):
-            # Compute aggregated direction
+            # Aggregated direction
             wss = self.warped_series[sei, :, :]
-            wss = np.multiply(wss.T, self.warping_directions)
+            wss = np.multiply(wss.T, self._warping_directions)
             wss = wss.sum(axis=0)
+            # Aggregated inertia
+            wsi = self.warped_series[sei, :, :]
+            wsi = np.multiply(wsi.T, self._warping_inertia)
+            wsi = wsi.sum(axis=0)
 
             # Dynamic programming with window size 3. We only allow a shift of one or zero.
             cc = np.zeros((self.nb_events, 3))  # cumulative cost
@@ -338,8 +361,8 @@ class EventSeries:
                 #              Move back to diagonal from one behind
                 #              |           Stay on diagonal
                 #              |           |           Move to diagonal from one ahead (thus stay)
-                #              |           |           |                Staying has no cost
-                cc[i, 1] = min(cc[i-1, 0], cc[i-1, 1], cc[i-1, 2])  # + 0
+                #              |           |           |                Inertia (reward for staying)
+                cc[i, 1] = min(cc[i-1, 0], cc[i-1, 1], cc[i-1, 2]) - wsi[i]
                 # Forward
                 #              Skip diagonal and move from one back for previous to one ahead for this one
                 #              |           Move one forward from diagonal
@@ -396,7 +419,7 @@ class EventSeries:
             s += "\n"
         return s
 
-    def plot_directions(self, symbol=0):
+    def plot_directions(self, symbol=0, seriesidx=None):
         import matplotlib as mpl
         import matplotlib.pyplot as plt
         if type(symbol) is set:
@@ -405,35 +428,56 @@ class EventSeries:
             symbol = {symbol}
         elif isinstance(symbol, collections.Iterable):
             symbol = set(symbol)
+        nrows = 2
         if self.rescale_active:
-            nrows = 3
+            nrows += 1
+        if seriesidx is not None:
+            nrows += 1
+            wss = np.multiply(self.warped_series[seriesidx, :, :].T, self.warping_directions).sum(axis=0)
         else:
-            nrows = 2
+            wss = None
         fig, axs = plt.subplots(nrows=nrows, ncols=len(symbol), sharex=True, sharey='row', figsize=(5*len(symbol), 4))
         cnts = self.compute_counts()
         # colors = mpl.cm.get_cmap().colors
         colors = [c["color"] for c in mpl.rcParams["axes.prop_cycle"]]
+        amp = np.max(np.abs(self.warping_directions[list(symbol)]))
         for curidx, cursymbol in enumerate(symbol):
             curcnts = cnts[cursymbol]
+            # Counts
             axrow = 0
             ax = axs[axrow, curidx] if len(symbol) > 1 else axs[axrow]
             ax.set_title(f"Symbol {cursymbol}: {self.int2symbol.get(cursymbol, cursymbol)}")
             ax.bar(list(range(len(curcnts))), curcnts, color=colors[0], label="Counts")
             ax.plot(self.windowed_counts[cursymbol], '-o', color=colors[1], label="Counts (smoothed)")
             if curidx == 0:
-                ax.legend()
+                ax.legend(bbox_to_anchor=(-0.1, 1), loc='upper right')
             axrow += 1
+            # Scaled counts
             if self.rescale_active:
                 ax = axs[axrow, curidx] if len(symbol) > 1 else axs[axrow]
-                ax.plot(self.rescaled_counts[cursymbol], '-o', color=colors[3], label="Rescaled counts")
+                ax.plot(self.rescaled_counts[cursymbol], '-o', color=colors[2], label="Rescaled counts")
                 if curidx == 0:
-                    ax.legend()
+                    ax.legend(bbox_to_anchor=(-0.1, 1), loc='upper right')
                 axrow += 1
+            # Directions (gradients)
             ax = axs[axrow, curidx] if len(symbol) > 1 else axs[axrow]
             ax.axhline(y=0, color='r', linestyle=':', alpha=0.3)
-            ax.axhline(y=1, color='b', linestyle=':', alpha=0.3)
-            ax.axhline(y=-1, color='b', linestyle=':', alpha=0.3)
-            ax.plot(self.warping_directions[cursymbol], '-o', color=colors[2], label="Directions")
+            # ax.axhline(y=1, color='b', linestyle=':', alpha=0.3)
+            # ax.axhline(y=-1, color='b', linestyle=':', alpha=0.3)
+            if seriesidx is not None:
+                ax.plot(wss, '-+', color=colors[3], label=f"Agg directions ({seriesidx})")
+            ax.plot(self._warping_directions[cursymbol], '-o', color=colors[4], label="Directions")
+            ax.plot(self._warping_inertia[cursymbol], '-o', color=colors[5], label="Inertia")
+            ax.set_ylim(-amp, amp)
             if curidx == 0:
-                ax.legend()
+                ax.legend(bbox_to_anchor=(-0.1, 1), loc='upper right')
+            axrow += 1
+            # Counts in given series
+            if seriesidx is not None:
+                ax = axs[axrow, curidx] if len(symbol) > 1 else axs[axrow]
+                cursymbol_cnts = self.warped_series[seriesidx, :, cursymbol]
+                ax.bar(range(len(cursymbol_cnts)), cursymbol_cnts)
+                if curidx == 0:
+                    ax.legend(bbox_to_anchor=(-0.1, 1), loc='upper right')
+                axrow += 1
         return fig, axs
