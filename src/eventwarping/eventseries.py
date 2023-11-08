@@ -1,6 +1,7 @@
 import collections
 from pathlib import Path
 from typing import Optional
+import math
 
 import numpy as np
 import numpy.typing as npt
@@ -20,8 +21,9 @@ class EventSeries:
         :param window: Window over which can be warped (should be an odd integer).
             Full size of window. For example window=3 means, that symbols one
             slot to the left and one slot to the right are considered.
-        :param intonly: No dictionary for symbols required,
-            symbols are integers starting from 0
+        :param intonly: No dictionary for symbols used, the symbols are integer indices,
+            symbols are integers starting from 0 and range to the largest integer used.
+            This is not recommended for sparse sets of integers.
         """
         if window % 2 == 0:
             raise ValueError(f"Argument window should be an uneven number.")
@@ -31,8 +33,8 @@ class EventSeries:
         self.symbol2int = dict()
         self.int2symbol = dict()
         self.nb_series = 0
-        self.nb_events = 0  # length of series
-        self.nb_symbols = 0  # maximal size of set
+        self.nb_events = 0  # length of series (of sets)
+        self.nb_symbols = 0  # maximal size of set that represents an event
         self.window = window
         self.count_thr = 5  # expected minimal number of events
         self.rescale_power = 2  # Raise counts to this power and rescale
@@ -54,7 +56,6 @@ class EventSeries:
         self._versions = [0, 0, 0, 0]
 
     def warp(self, iterations=1, restart=False):
-        # TODO: nb iterations should be less than window?
         if restart:
             self.reset()
         for it in range(iterations):
@@ -80,8 +81,8 @@ class EventSeries:
         A file where each line is a list of sets of symbols. Each set represents a time point.
 
         :param fn: Filename or Path object
-        :param window: Window to smooth counts over
-        :param intonly: The symbols are represented by integers
+        :param window: See EventWarping
+        :param intonly: See EventWarping
         :return: EventWarping object
         """
         import ast
@@ -97,38 +98,59 @@ class EventSeries:
     def from_setlist(cls, sl, window, intonly=False):
         """Convert a setlist to an eventwarping object.
 
-        :param fn: Filename or Path object
-        :param window: Window to smooth counts over
-        :param intonly: The symbols are represented by integers
+        :param sl: List of sets of symbols
+        :param window: See EventWarping
+        :param intonly: See EventWarping
         :return: EventWarping object
         """
         es = EventSeries(window=window, intonly=intonly)
-        if not intonly:
-            raise AttributeError("Not yet supported")
-        max_int = 0
-        max_events = 0
+        es.nb_symbols = 0
+        es.nb_events = 0
+        es.nb_series = len(sl)
         for series in sl:
-            if len(series) > max_events:
-                max_events = len(series)
+            if len(series) > es.nb_events:
+                es.nb_events = len(series)
             for event in series:
                 for symbol in event:
-                    if type(symbol) is not int:
-                        raise AttributeError(f"Value is not an int: {symbol}")
-                    if symbol > max_int:
-                        max_int = symbol
-        es.nb_series = len(sl)
-        es.nb_events = max_events
-        es.nb_symbols = max_int + 1
+                    if intonly:
+                        if type(symbol) is not int:
+                            raise ValueError(f"Symbol is not an int: {symbol}")
+                        if symbol >= es.nb_symbols:
+                            es.nb_symbols = symbol + 1
+                    else:
+                        if symbol not in es.symbol2int:
+                            es.symbol2int[symbol] = es.nb_symbols
+                            es.int2symbol[es.nb_symbols] = symbol
+                            es.nb_symbols += 1
         es.series = np.zeros((es.nb_series, es.nb_events, es.nb_symbols), dtype=int)
         for sei, series in enumerate(sl):
             for evi, events in enumerate(series):
                 for symbol in events:
+                    if not intonly:
+                        symbol = es.symbol2int[symbol]
                     es.series[sei, evi, symbol] = 1
         return es
 
     @classmethod
-    def from_file(cls, fn, window):
-        es = EventSeries(window)
+    def from_file(cls, fn, window, intonly=False):
+        """Convert a simple formatted file to an eventwarping object.
+
+        The format is:
+        - A line is a series
+        - Events are separated by pipes '|'
+        - Symbols are separated by spaces
+
+        For example:
+
+            | A |   | A B |
+            |   | A |   B |
+
+        :param fn: Filename or file with list of sets of symbols
+        :param window: See EventWarping
+        :param intonly: See EventWarping
+        :return: EventWarping object
+        """
+        es = EventSeries(window, intonly=intonly)
         allseries = list()
         with fn.open("r") as fp:
             for line in fp.readlines():
@@ -139,10 +161,16 @@ class EventSeries:
                     if events != "":
                         events = [e.strip() for e in events.strip().split(" ") if e.strip() != ""]
                         for event in events:
-                            if event not in es.symbol2int:
-                                es.symbol2int[event] = es.nb_symbols
-                                es.int2symbol[es.nb_symbols] = event
-                                es.nb_symbols += 1
+                            if intonly:
+                                if type(event) is not int:
+                                    raise ValueError(f"Symbol is not int: {event}")
+                                if event >= es.nb_symbols:
+                                    es.nb_symbols = event + 1
+                            else:
+                                if event not in es.symbol2int:
+                                    es.symbol2int[event] = es.nb_symbols
+                                    es.int2symbol[es.nb_symbols] = event
+                                    es.nb_symbols += 1
                     series.append(events)
                 if len(series) > es.nb_events:
                     es.nb_events = len(series)
@@ -151,7 +179,7 @@ class EventSeries:
         for sei, series in enumerate(allseries):
             for evi, events in enumerate(series):
                 for symbol in events:
-                    syi = es.symbol2int[symbol]
+                    syi = symbol if intonly else es.symbol2int[symbol]
                     es.series[sei, evi, syi] = 1
         return es
 
@@ -269,20 +297,20 @@ class EventSeries:
         # Warping should not be beyond peak in gradients? Makes the
         # symbols swap and will not converge
         # We avoid contractions (this is when the gradients are pos and then neg)
-        # TODO: why the second and not the closest to zero
         conti = np.where(np.diff(np.sign(self._warping_directions)) == -2)
         for idx, (r, c) in enumerate(zip(*conti)):
             if abs(self._warping_directions[r, c]) > abs(self._warping_directions[r, c + 1]):
                 conti[1][idx] += 1
         self._warping_directions[conti] = 0
-        # All zero crossings have inertia, you don't want to move them as they are already a peak
+        # All zero crossings from pos to neg have inertia, we don't want to move them as they are already a peak
         self._warping_inertia = np.zeros(self._warping_directions.shape)
         conti = np.where(self._warping_directions == 0.0)
         for r, c in zip(*conti):
             if c == 0 or c == self._warping_directions.shape[1] - 1:
                 continue
             if self._warping_directions[r, c - 1] > 0 > self._warping_directions[r, c + 1]:
-                self._warping_inertia[r, c] = self._warping_directions[r, c - 1] - self._warping_directions[r, c + 1]
+                self._warping_inertia[r, c] = max(self._warping_directions[r, c - 1],
+                                                  self._warping_directions[r, c + 1])
         self._versions[V_WD] += 1
         return self._warping_directions
 
@@ -410,20 +438,25 @@ class EventSeries:
 
     def _format_series(self, series):
         # (nb_series, nb_events, nb_symbols)
+        if self.intonly:
+            sl = math.floor(math.log(self.nb_symbols - 1, 10)) + 1 + 1
+
+            def fmt_symbol(syi):
+                return f"{syi:>{sl}}"
+        else:
+            sl = max(len(str(k)) for k in self.symbol2int.keys()) + 1
+
+            def fmt_symbol(syi):
+                return f"{self.int2symbol[syi]:>{sl}}"
+        empty = " " * sl
         s = ''
         for sei in range(self.nb_series):
             for evi in range(self.nb_events):
-                s += ' '
                 for syi in range(self.nb_symbols):
                     if series[sei, evi, syi]:
-                        if self.intonly:
-                            if syi < 10:
-                                s += " "
-                            s += str(syi)
-                        else:
-                            s += f"{self.int2symbol[syi]:>2}"
+                        s += fmt_symbol(syi)
                     else:
-                        s += "  "
+                        s += empty
                 s += " |"
             s += "\n"
         return s

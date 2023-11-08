@@ -108,7 +108,11 @@ def test_example5():
     fig, axs = es.plot_directions(symbol={0, 1, 2, 3})
     fig.savefig(directory / "gradients.png")
     plt.close(fig)
-    es.compute_warped_series()
 
     print("=== 1 ===")
+    es.compute_warped_series()
+    print(es.format_warped_series())
+
+    print("=== 2 ===")
+    es.compute_warped_series()
     print(es.format_warped_series())
