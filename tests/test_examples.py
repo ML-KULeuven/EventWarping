@@ -143,7 +143,7 @@ def test_example7():
     print("")
     fn = Path(__file__).parent / "rsrc" / "example7.txt"
 
-    es = EventSeries.from_file(fn, window=3, constraints=MaxMergeConstraints(p=1, per_symbol=False))
+    es = EventSeries.from_file(fn, window=5, constraints=MaxMergeConstraints(p=1, per_symbol=True))
     print('Original')
     print(es.format_warped_series())
 

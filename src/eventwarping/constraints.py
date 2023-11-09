@@ -36,14 +36,13 @@ class MaxMergeConstraints(ConstraintsBaseClass):
         return self.constraint_matrix
 
     def add_no_more_than_p_symbols_together_constraint(self):
-        # True if more than p breaths together in an itemset
         for j, series in enumerate(self.es.warped_series):
             item_count = self.es.warped_series[j, :-1, :] + self.es.warped_series[j, 1:, :]
 
             if self.per_symbol:
                 condition = np.sum((item_count > self.p), 1).astype(bool)
             else:
-                # TODO: still allows to do |A| |B| to become | |AB| |
+                # TODO: still allows to do |A| |B| to become | |AB| | if p=1
                 condition = (np.sum(item_count, axis=1) > self.p).astype(bool)
             self.constraint_matrix[j, 1:, 0][condition] = True
             self.constraint_matrix[j, :-1, 2][condition] = True
