@@ -49,6 +49,8 @@ class EventSeries:
         self._warped_series: Optional[npt.NDArray[np.int]] = None
         self._versions = [0, 0, 0, 0]  # V_WC, V_RC, V_WD, V_WS
         self.constraints = constraints
+        if self.constraints is not None:
+            self.constraints.es = self
 
     def reset(self):
         self._windowed_counts = None
@@ -412,7 +414,7 @@ class EventSeries:
 
         # compute constraints
         if self.constraints is not None:
-            constraint_matrix = self.constraints(self).calculate_constraint_matrix()
+            constraint_matrix = self.constraints.calculate_constraint_matrix()
         else:
             constraint_matrix = np.zeros((self.nb_series, self.nb_events, 3), dtype=bool)
 
@@ -454,7 +456,6 @@ class EventSeries:
 
             # Do realignment
             # TODO: Should original items sets be remembered or can they be merged
-            # TODO: Should it be allowed to merge two symbols (changes the counts)
             for i_from, i_to in path:
                 ws[sei, i_to, :] = ws[sei, i_to, :] + self.warped_series[sei, i_from, :]
 

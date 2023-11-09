@@ -6,8 +6,8 @@ from pathlib import Path
 import os
 
 from eventwarping.eventseries import EventSeries
+from eventwarping.constraints import MaxMergeConstraints
 
-from eventwarping.constraints import ApneaConstraints
 
 # If environment variable TESTDIR is set, save figures to this
 # directory, otherwise to the test directory
@@ -119,29 +119,14 @@ def test_example5():
     print(es.format_warped_series())
 
 
-class TestConstraints(ApneaConstraints):
-
-    def calculate_constraint_matrix(self):
-        self.constraint_matrix = np.zeros([self.nb_series, self.nb_events, 3], dtype=bool)
-        self.add_no_more_than_p_breaths_together_constraint(2)
-        return self.constraint_matrix
-
-    def add_no_more_than_p_breaths_together_constraint(self, p=3):
-        # True if more than p breaths together in an itemset
-        for j, series in enumerate(self.es.warped_series):
-            item_count = self.es.warped_series[j, :-1, :] + self.es.warped_series[j, 1:, :]
-
-            condition = np.sum((item_count > p), 1).astype(bool)
-            self.constraint_matrix[j, 1:, 0][condition] = True
-            self.constraint_matrix[j, :-1, 2][condition] = True
-
-
 def test_example6():
-    # mpl.use('MacOSX')
     print("")
     fn = Path(__file__).parent / "rsrc" / "example6.txt"
 
-    es = EventSeries.from_file(fn, window=3, constraints=TestConstraints)
+    es = EventSeries.from_file(fn, window=3, constraints=MaxMergeConstraints(p=2))
+    print('Original')
+    print(es.format_warped_series())
+
     for i in range(10):
         es.warp()
     print('With constraints')
@@ -151,4 +136,18 @@ def test_example6():
     for i in range(10):
         es.warp()
     print('Without constraints')
+    print(es.format_warped_series())
+
+
+def test_example7():
+    print("")
+    fn = Path(__file__).parent / "rsrc" / "example7.txt"
+
+    es = EventSeries.from_file(fn, window=3, constraints=MaxMergeConstraints(p=1, per_symbol=False))
+    print('Original')
+    print(es.format_warped_series())
+
+    for i in range(10):
+        es.warp()
+    print('Result')
     print(es.format_warped_series())

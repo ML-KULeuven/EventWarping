@@ -3,9 +3,18 @@ from abc import ABC, abstractmethod
 
 
 class ConstraintsBaseClass(ABC):
-    def __init__(self, es):
-        self.es = es
-        self.nb_series, self.nb_events, self.nb_symbols = es.warped_series.shape
+    def __init__(self, es=None):
+        self._es = es
+
+    @property
+    def es(self):
+        if self._es is None:
+            raise Exception(f"EventSeries ('es') need to be set in a constraint before it can be used.")
+        return self._es
+
+    @es.setter
+    def es(self, value):
+        self._es = value
 
     @abstractmethod
     def calculate_constraint_matrix(self):
@@ -14,10 +23,36 @@ class ConstraintsBaseClass(ABC):
         raise NotImplementedError()
 
 
+class MaxMergeConstraints(ConstraintsBaseClass):
+    def __init__(self, p=3, per_symbol=True, es=None):
+        super().__init__(es=es)
+        self.p = p
+        self.constraint_matrix = None
+        self.per_symbol = per_symbol
+
+    def calculate_constraint_matrix(self):
+        self.constraint_matrix = np.zeros([self.es.nb_series, self.es.nb_events, 3], dtype=bool)
+        self.add_no_more_than_p_symbols_together_constraint()
+        return self.constraint_matrix
+
+    def add_no_more_than_p_symbols_together_constraint(self):
+        # True if more than p breaths together in an itemset
+        for j, series in enumerate(self.es.warped_series):
+            item_count = self.es.warped_series[j, :-1, :] + self.es.warped_series[j, 1:, :]
+
+            if self.per_symbol:
+                condition = np.sum((item_count > self.p), 1).astype(bool)
+            else:
+                # TODO: still allows to do |A| |B| to become | |AB| |
+                condition = (np.sum(item_count, axis=1) > self.p).astype(bool)
+            self.constraint_matrix[j, 1:, 0][condition] = True
+            self.constraint_matrix[j, :-1, 2][condition] = True
+
+
 class ApneaConstraints(ConstraintsBaseClass):
 
     def calculate_constraint_matrix(self):
-        self.constraint_matrix = np.zeros([self.nb_series, self.nb_events, 3], dtype=bool)
+        self.constraint_matrix = np.zeros([self.es.nb_series, self.es.nb_events, 3], dtype=bool)
         self.add_start_stop_constraint([1, 3], [2, 4])
         self.add_no_more_than_p_breaths_together_constraint(3)
         return self.constraint_matrix
