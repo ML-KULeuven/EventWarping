@@ -7,6 +7,7 @@ import os
 
 from eventwarping.eventseries import EventSeries
 
+from eventwarping.constraints import ApneaConstraints
 
 # If environment variable TESTDIR is set, save figures to this
 # directory, otherwise to the test directory
@@ -115,4 +116,39 @@ def test_example5():
 
     print("=== 2 ===")
     es.compute_warped_series()
+    print(es.format_warped_series())
+
+
+class TestConstraints(ApneaConstraints):
+
+    def calculate_constraint_matrix(self):
+        self.constraint_matrix = np.zeros([self.nb_series, self.nb_events, 3], dtype=bool)
+        self.add_no_more_than_p_breaths_together_constraint(2)
+        return self.constraint_matrix
+
+    def add_no_more_than_p_breaths_together_constraint(self, p=3):
+        # True if more than p breaths together in an itemset
+        for j, series in enumerate(self.es.warped_series):
+            item_count = self.es.warped_series[j, :-1, :] + self.es.warped_series[j, 1:, :]
+
+            condition = np.sum((item_count > p), 1).astype(bool)
+            self.constraint_matrix[j, 1:, 0][condition] = True
+            self.constraint_matrix[j, :-1, 2][condition] = True
+
+
+def test_example6():
+    # mpl.use('MacOSX')
+    print("")
+    fn = Path(__file__).parent / "rsrc" / "example6.txt"
+
+    es = EventSeries.from_file(fn, window=3, constraints=TestConstraints)
+    for i in range(10):
+        es.warp()
+    print('With constraints')
+    print(es.format_warped_series())
+
+    es = EventSeries.from_file(fn, window=3)
+    for i in range(10):
+        es.warp()
+    print('Without constraints')
     print(es.format_warped_series())
