@@ -4,11 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "eventwarping"
-version = "0.0.1"
+version = "0.1.0"
 authors = [
-  { name="Wannes Meert", email="wannes.meert@kuleuven.be" },
+    { name="Wannes Meert", email="wannes.meert@kuleuven.be" },
+    {name="Dries Van der Plas", email="dries.vanderplas@kuleuven.be"},
 ]
-description = "Warp event streams"
+description = "Align event streams"
 readme = "README.md"
 requires-python = ">=3.7"
 classifiers = [
