@@ -15,7 +15,7 @@ V_WS = 3  # Index for version of warped series
 
 
 class EventSeries:
-    def __init__(self, window=3, intonly=False):
+    def __init__(self, window=3, intonly=False, constraints=None):
         """Warp series of symbolic events.
 
         :param window: Window over which can be warped (should be an odd integer).
@@ -24,6 +24,7 @@ class EventSeries:
         :param intonly: No dictionary for symbols used, the symbols are integer indices,
             symbols are integers starting from 0 and range to the largest integer used.
             This is not recommended for sparse sets of integers.
+        :param constraints: Child class inheriting from ConstraintsBaseClass
         """
         if window % 2 == 0:
             raise ValueError(f"Argument window should be an uneven number.")
@@ -47,6 +48,7 @@ class EventSeries:
         self._zero_crossings = None
         self._warped_series: Optional[npt.NDArray[np.int]] = None
         self._versions = [0, 0, 0, 0]  # V_WC, V_RC, V_WD, V_WS
+        self.constraints = constraints
 
     def reset(self):
         self._windowed_counts = None
@@ -76,13 +78,14 @@ class EventSeries:
             yield self.warped_series
 
     @classmethod
-    def from_setlistfile(cls, fn, window, intonly=False):
+    def from_setlistfile(cls, fn, window, intonly=False, constraints=None, max_series_length=None):
         """Read a setlist file and create an eventwarping object.
         A file where each line is a list of sets of symbols. Each set represents a time point.
 
         :param fn: Filename or Path object
         :param window: See EventWarping
         :param intonly: See EventWarping
+        :param constraints: See EventWarping
         :return: EventWarping object
         """
         import ast
@@ -92,18 +95,47 @@ class EventSeries:
         with fn.open("r") as fp:
             for line in fp.readlines():
                 data.append(ast.literal_eval(line))
-        return cls.from_setlist(data, window, intonly)
+        return cls.from_setlist(data, window, intonly, constraints, max_series_length)
 
     @classmethod
-    def from_setlist(cls, sl, window, intonly=False):
+    def from_setlistfiles(cls, fns, window, intonly=False, selected=None,
+                          constraints=None, max_series_length=None):
+        """Read a list of setlist file and create an eventwarping object.
+        A file where each line is a list of sets of symbols. Each set represents a time point.
+
+        :param fn: Filename or Path object
+        :param window: See EventWarping
+        :param intonly: See EventWarping
+        :param selected: Boolean list. Only use the i-th series if selected[i] is True
+        :param constraints: See EventWarping
+        :return: EventWarping object
+        """
+        import ast
+        data = list()
+        i = 0
+        for fn in fns:
+            if type(fn) is str:
+                fn = Path(fn)
+            with fn.open("r") as fp:
+                for line in fp.readlines():
+                    if (selected is None) or selected[i]:
+                        data_line = ast.literal_eval(line)
+                        data.append(data_line)
+                    i += 1
+        return cls.from_setlist(data, window, intonly, constraints, max_series_length)
+
+    @classmethod
+    def from_setlist(cls, sl, window, intonly=False, constraints=None, max_series_length=None):
         """Convert a setlist to an eventwarping object.
 
         :param sl: List of sets of symbols
         :param window: See EventWarping
         :param intonly: See EventWarping
+        :param constraints: See EventWarping
+        :param max_series_length: lenght of each series (i.e. #itemsets) is truncated to this size
         :return: EventWarping object
         """
-        es = EventSeries(window=window, intonly=intonly)
+        es = EventSeries(window=window, intonly=intonly, constraints=constraints)
         es.nb_symbols = 0
         es.nb_events = 0
         es.nb_series = len(sl)
@@ -122,9 +154,11 @@ class EventSeries:
                             es.symbol2int[symbol] = es.nb_symbols
                             es.int2symbol[es.nb_symbols] = symbol
                             es.nb_symbols += 1
+        if max_series_length:
+            es.nb_events = min(es.nb_events, max_series_length)
         es.series = np.zeros((es.nb_series, es.nb_events, es.nb_symbols), dtype=int)
         for sei, series in enumerate(sl):
-            for evi, events in enumerate(series):
+            for evi, events in enumerate(series[:es.nb_events]):
                 for symbol in events:
                     if not intonly:
                         symbol = es.symbol2int[symbol]
@@ -132,7 +166,7 @@ class EventSeries:
         return es
 
     @classmethod
-    def from_file(cls, fn, window, intonly=False):
+    def from_file(cls, fn, window, intonly=False, constraints=None, max_series_length=None):
         """Convert a simple formatted file to an eventwarping object.
 
         The format is:
@@ -148,9 +182,10 @@ class EventSeries:
         :param fn: Filename or file with list of sets of symbols
         :param window: See EventWarping
         :param intonly: See EventWarping
+        :param constraints: See EventWarping
         :return: EventWarping object
         """
-        es = EventSeries(window, intonly=intonly)
+        es = EventSeries(window, intonly=intonly, constraints=constraints)
         allseries = list()
         with fn.open("r") as fp:
             for line in fp.readlines():
@@ -175,6 +210,8 @@ class EventSeries:
                 if len(series) > es.nb_events:
                     es.nb_events = len(series)
                 allseries.append(series)
+        if max_series_length:
+            es.nb_events = min(es.nb_events, max_series_length)
         es.series = np.zeros((es.nb_series, es.nb_events, es.nb_symbols), dtype=int)
         for sei, series in enumerate(allseries):
             for evi, events in enumerate(series):
@@ -373,6 +410,12 @@ class EventSeries:
 
         ws = np.zeros((self.nb_series, self.nb_events, self.nb_symbols), dtype=int)
 
+        # compute constraints
+        if self.constraints is not None:
+            constraint_matrix = self.constraints(self).calculate_constraint_matrix()
+        else:
+            constraint_matrix = np.zeros((self.nb_series, self.nb_events, 3), dtype=bool)
+
         for sei in range(self.nb_series):
             # Aggregated direction
             wss = self.warped_series[sei, :, :]
@@ -393,19 +436,19 @@ class EventSeries:
                 #              Stay one behind
                 #              |           Move on back from diagonal
                 #              |           |             Cost to move backward is the positive gradient
-                cc[i, 0] = min(cc[i-1, 0], cc[i-1, 1]) + wss[i]
+                cc[i, 0] = min(cc[i-1, 0], cc[i-1, 1]) + wss[i] if not constraint_matrix[sei, i, 0] else np.inf
                 # Stay
                 #              Move back to diagonal from one behind
                 #              |           Stay on diagonal
                 #              |           |           Move to diagonal from one ahead (thus stay)
                 #              |           |           |                Inertia (reward for staying)
-                cc[i, 1] = min(cc[i-1, 0], cc[i-1, 1], cc[i-1, 2]) - wsi[i]
+                cc[i, 1] = min(cc[i-1, 0], cc[i-1, 1], cc[i-1, 2]) - wsi[i] if not constraint_matrix[sei, i, 1] else np.inf
                 # Forward
                 #              Skip diagonal and move from one back for previous to one ahead for this one
                 #              |           Move one forward from diagonal
                 #              |           |           Stay one forward
                 #              |           |           |             Cost to move forward is the negative gradient
-                cc[i, 2] = min(cc[i-1, 0], cc[i-1, 1], cc[i-1, 2]) + -wss[i]
+                cc[i, 2] = min(cc[i-1, 0], cc[i-1, 1], cc[i-1, 2]) + -wss[i] if not constraint_matrix[sei, i, 2] else np.inf
             cc[len(wss) - 1, 2] = np.inf  # Last element cannot move forward
             path = self._best_warped_path(cc)
 
