@@ -143,11 +143,17 @@ def test_example7():
     print("")
     fn = Path(__file__).parent / "rsrc" / "example7.txt"
 
-    es = EventSeries.from_file(fn, window=5, constraints=MaxMergeConstraints(p=1, per_symbol=True))
+    es = EventSeries.from_file(fn, window=5)
+    es.allow_merge = 1
+    es._use_warping_v2 = True
     print('Original')
     print(es.format_warped_series())
 
-    for i in range(10):
-        es.warp()
+    for i in range(3):
+        print(f"=== {i} ===")
+        es.warp(plot={'filename': str(directory / f'gradients_{i}.png'),
+                      'symbol': {0, 1},
+                      'seriesidx': 0})
+        print(es.format_warped_series())
     print('Result')
     print(es.format_warped_series())
