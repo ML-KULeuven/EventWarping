@@ -237,6 +237,16 @@ class EventSeries:
                     es.series[sei, evi, syi] = 1
         return es
 
+    def insert_spacers(self, nb_spacers):
+        ws = np.zeros((self.nb_series, (1+nb_spacers)*self.nb_events, self.nb_symbols), dtype=int)
+        ws[:, 0, :] = self._warped_series[:, 0, :]
+        for i in range(1, self.nb_events):
+            ws[:, (1+nb_spacers)*i, :] = self._warped_series[:, i, :]
+        self.series = ws
+        self.nb_events = (1+nb_spacers)*self.nb_events
+        self.window = ((self.window // 2) + nb_spacers)*2 + 1
+        self.reset()
+
     def compute_counts(self):
         if self._warped_series is None:
             self._warped_series = self.series
@@ -262,8 +272,9 @@ class EventSeries:
         wc[:, :sides] = wc[:, sides:sides+1]
         wc[:, -sides:] = wc[:, -sides-1:-sides]
         # Add without a window (otherwise the begin and end cannot differentiate)
-        c = self._warped_series.sum(axis=0).T
-        self._windowed_counts = np.add(wc, c) / 2
+        # c = self._warped_series.sum(axis=0).T
+        # self._windowed_counts = np.add(wc, c) / 2
+        self._windowed_counts = wc
         self._versions[V_WC] += 1
         return self._windowed_counts
 
@@ -474,6 +485,9 @@ class EventSeries:
                 sc[0, 0, :] = 0
                 sc[0, 1, :] = self._warped_series[sei, 0, :]
                 sc[0, 2, :] = self._warped_series[sei, 0, :]
+            else:
+                ps = None
+                sc = None
             for i in range(1, len(wss)):
                 # Backward
                 if not self._use_warping_v2:
@@ -651,7 +665,7 @@ class EventSeries:
                     ax.legend(bbox_to_anchor=(-0.1, 1), loc='upper right')
                 axrow += 1
         if filename is not None:
-            fig.savefig(filename)
+            fig.savefig(filename, bbox_inches='tight')
             plt.close(fig)
             return None
         return fig, axs
