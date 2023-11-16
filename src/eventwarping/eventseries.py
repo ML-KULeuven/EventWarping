@@ -240,6 +240,8 @@ class EventSeries:
         return es
 
     def insert_spacers(self, nb_spacers):
+        if self._warped_series is None:
+            self._warped_series = self.series
         new_nb_events = (1+nb_spacers)*(self.nb_events-1)+1
         ws = np.zeros((self.nb_series, new_nb_events, self.nb_symbols), dtype=int)
         ws[:, 0, :] = self._warped_series[:, 0, :]
@@ -250,11 +252,27 @@ class EventSeries:
         self.window = ((self.window // 2) + nb_spacers)*2 + 1
         self.reset()
 
-    def compute_counts(self):
+    def get_counts(self, ignore_merged=False):
         if self._warped_series is None:
             self._warped_series = self.series
-        cnts = self._warped_series.sum(axis=0).T
+        if ignore_merged:
+            cnts = np.sign(self._warped_series).sum(axis=0).T
+        else:
+            cnts = self._warped_series.sum(axis=0).T
         return cnts
+
+    def get_smoothed_counts(self, window=3, ignore_merged=False):
+        if self._warped_series is None:
+            self._warped_series = self.series
+        if ignore_merged:
+            counts = np.sign(self._warped_series)
+        else:
+            counts = self._warped_series
+        kernel = signal.windows.hann(window)  # make sure to be uneven to be centered
+        counts = counts.sum(axis=0).T
+        for si in range(counts.shape[0]):
+            counts[si, :] = signal.convolve(counts[si, :], kernel, mode='same') / sum(kernel)
+        return counts
 
     def compute_windowed_counts(self):
         """Count over window and series
@@ -696,7 +714,7 @@ class EventSeries:
             wss = None
             wsi = None
         fig, axs = plt.subplots(nrows=nrows, ncols=len(symbol), sharex=True, sharey='row', figsize=(5*len(symbol), 4))
-        cnts = self.compute_counts()
+        cnts = self.get_counts()
         # colors = mpl.cm.get_cmap().colors
         colors = [c["color"] for c in mpl.rcParams["axes.prop_cycle"]]
         # amp = np.max(np.abs(self.warping_directions[list(symbol)]))
@@ -746,6 +764,29 @@ class EventSeries:
                 if curidx == 0:
                     ax.legend(bbox_to_anchor=(-0.1, 1), loc='upper right')
                 axrow += 1
+        if filename is not None:
+            fig.savefig(filename, bbox_inches='tight')
+            plt.close(fig)
+            return None
+        return fig, axs
+
+    def plot_symbols(self, filename=None):
+        import matplotlib as mpl
+        import matplotlib.pyplot as plt
+        fig, axs = plt.subplots(nrows=1, ncols=2, figsize=(10, 8))
+
+        ax = axs[0]
+        im = self.get_counts(ignore_merged=True)
+        ax.imshow(im)
+        ax.set_xlabel('Events')
+        ax.set_ylabel('Symbol')
+
+        ax = axs[1]
+        im = self.get_smoothed_counts(window=5, ignore_merged=True)
+        ax.imshow(im)
+        ax.set_xlabel('Events')
+        ax.set_ylabel('Symbol')
+
         if filename is not None:
             fig.savefig(filename, bbox_inches='tight')
             plt.close(fig)

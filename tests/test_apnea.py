@@ -47,16 +47,18 @@ def test_example1_v2():
     fn = get_data("MST_M03_0004086_itemsets_series.txt")
     es = EventSeries.from_setlistfile(fn, window=5, intonly=True)
     es._use_warping_v2 = True
-    es.allow_merge = 2
+    es.allow_merge = 1
+    es.insert_spacers(1)
     # Prefer to group initial / end states
     for symbol in [1, 2, 3, 4]:
         es.rescale_weights[symbol] = 5
 
-    for i in range(5):
+    for i in range(10):
         print(f"=== {i+1:>2} ===")
         es.compute_warping_directions()
-        fig, axs = es.plot_directions(symbol={3,4,5}, seriesidx=2)
-        fig.savefig(directory / f"gradients_{i}.png", bbox_inches='tight')
-        plt.close(fig)
+        es.plot_directions(symbol={3,4,5}, seriesidx=2, filename=str(directory / f"gradients_{i}.png"))
         es.compute_warped_series()
         print(es.format_warped_series())
+        es.plot_symbols(filename=str(directory / f"symbols_{i}.png"))
+
+    es.plot_symbols(filename=str(directory / f"symbols.png"))
