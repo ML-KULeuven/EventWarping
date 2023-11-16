@@ -387,6 +387,7 @@ class EventSeries:
         self._smoothed_counts = countsf
 
         # Compensate for edge effects
+        # (this currently overcompensates and is worse, the windowed counting already compensates)
         # shape = list(self._windowed_counts.shape)
         # shape[1] += kernel_side * 2
         # counts = np.zeros(shape)
@@ -401,6 +402,7 @@ class EventSeries:
 
         gradients = np.gradient(countsf, axis=1, edge_order=1)
         # kernel sides are underestimated because events are empty beyond bounds, correct for this in the gradient
+        # (overcompensates and is worse)
         # gradients[:, :kernel_side] = np.tile(gradients[:, kernel_side:kernel_side+1], (1, kernel_side))
         # gradients[:, -kernel_side:None] = np.tile(gradients[:, -kernel_side:-kernel_side+1], (1, kernel_side))
 
@@ -442,7 +444,7 @@ class EventSeries:
                 lastc += 1
             if self._warping_directions[r, c - 1] > 0 > self._warping_directions[r, lastc]:
                 self._warping_inertia[r, c] = max(self._warping_directions[r, c - 1],
-                                                  self._warping_directions[r, lastc])
+                                                  -self._warping_directions[r, lastc])
                 self._warping_directions[r, c + 1:lastc] = self._warping_directions[r, lastc]
 
         # Threshold values (set small gradients to zero)
