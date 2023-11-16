@@ -50,7 +50,7 @@ def test_example1_v2():
     es.allow_merge = 2
     # Prefer to group initial / end states
     for symbol in [1, 2, 3, 4]:
-        es.rescale_weights[symbol] = 10
+        es.rescale_weights[symbol] = 5
 
     for i in range(5):
         print(f"=== {i+1:>2} ===")

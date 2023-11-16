@@ -282,16 +282,19 @@ class EventSeries:
         ws = ws * self._factors[:, np.newaxis, :]
 
         # Sliding window to aggregate from neighbours
-        w = np.lib.stride_tricks.sliding_window_view(ws, (self.nb_series, self.window), (0, 1))
         sides = int((self.window - 1) / 2)
         wc = np.zeros((self.nb_symbols, self.nb_events))
-        wc[:, sides:-sides] = w.sum(axis=(-2, -1))[0].T
+        # w = np.lib.stride_tricks.sliding_window_view(ws, (self.nb_series, self.window), (0, 1))
+        # wc[:, sides:-sides] = w.sum(axis=(-2, -1))[0].T
+        c = ws.sum(axis=0)
+        w = np.lib.stride_tricks.sliding_window_view(c, (self.window,), axis=(0,))
+        wc[:, sides:-sides] = w.sum(axis=0)
         # Pad the beginning and ending with the same values (having half a window can lower the count)
         wc[:, :sides] = wc[:, sides:sides+1]
         wc[:, -sides:] = wc[:, -sides-1:-sides]
         # Add without a window (otherwise the begin and end cannot differentiate)
-        c = ws.sum(axis=0).T
-        self._windowed_counts = np.add(wc, c) / 2
+        # c = ws.sum(axis=0).T
+        self._windowed_counts = np.add(wc, c.T) / 2
         # self._windowed_counts = wc
 
         self._versions[V_WC] += 1
@@ -327,8 +330,8 @@ class EventSeries:
         sums[sums == 0.0] = 1.0
         countsp = countsp / sums[:, np.newaxis]
         factors = self._factors.sum(axis=0)  # sum per symbol
-        partfn = np.sign(self._factors).sum(axis=0)  # compute average
-        factors = np.divide(factors, partfn)
+        partfn = np.sign(self._factors).sum(axis=0)  # nb of nonempty series per symbol
+        factors = np.divide(factors, partfn)  # compute average factor per symbol over all series
         countsp = countsp * factors[:, np.newaxis]
 
         # Reweigh certain symbols
@@ -383,6 +386,7 @@ class EventSeries:
             countsf[si, :] = signal.convolve(counts[si, :], kernel, mode='same') / sum(kernel)
         self._smoothed_counts = countsf
 
+        # Compensate for edge effects
         # shape = list(self._windowed_counts.shape)
         # shape[1] += kernel_side * 2
         # counts = np.zeros(shape)
@@ -393,8 +397,12 @@ class EventSeries:
         # countsf = np.zeros(self._windowed_counts.shape)
         # for si in range(countsf.shape[0]):
         #     countsf[si, :] = signal.convolve(counts[si, :], kernel, mode='valid') / sum(kernel)
+        # self._smoothed_counts = countsf
 
         gradients = np.gradient(countsf, axis=1, edge_order=1)
+        # kernel sides are underestimated because events are empty beyond bounds, correct for this in the gradient
+        # gradients[:, :kernel_side] = np.tile(gradients[:, kernel_side:kernel_side+1], (1, kernel_side))
+        # gradients[:, -kernel_side:None] = np.tile(gradients[:, -kernel_side:-kernel_side+1], (1, kernel_side))
 
         # Transform gradients into directions (and magnitude)
         # divide by 2 for the gradient function (edge_order=1)
