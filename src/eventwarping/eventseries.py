@@ -288,7 +288,7 @@ class EventSeries:
         # wc[:, sides:-sides] = w.sum(axis=(-2, -1))[0].T
         c = ws.sum(axis=0)
         w = np.lib.stride_tricks.sliding_window_view(c, (self.window,), axis=(0,))
-        wc[:, sides:-sides] = w.sum(axis=0)
+        wc[:, sides:-sides] = w.sum(axis=2).T
         # Pad the beginning and ending with the same values (having half a window can lower the count)
         wc[:, :sides] = wc[:, sides:sides+1]
         wc[:, -sides:] = wc[:, -sides-1:-sides]
