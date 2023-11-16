@@ -170,11 +170,11 @@ def test_example8():
     es.insert_spacers(1)
     print(f'Spaced\n{es.format_warped_series()}')
 
-    for i in range(3):
+    for i in range(5):
         print(f"=== {i} ===")
         es.warp(plot={'filename': str(directory / f'gradients_{i}.png'),
                       'symbol': {0, 1},
-                      'seriesidx': 0})
+                      'seriesidx': 1})
         print(es.format_warped_series())
     print('Result')
     print(es.format_warped_series())
