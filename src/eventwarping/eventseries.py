@@ -278,6 +278,7 @@ class EventSeries:
         # that occur in almost every timestep, should not impact the warping too much.
         max_entropy = np.log2(1 / self.nb_events)
         self._factors = 1 - np.log2(np.divide(1, np.sum(ws, axis=1))) / max_entropy
+        self._factors[np.isinf(self._factors)] = 1
         ws = ws * self._factors[:, np.newaxis, :]
 
         # Sliding window to aggregate from neighbours
