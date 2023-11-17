@@ -53,7 +53,7 @@ def test_example1_v2():
     for symbol in [1, 2, 3, 4]:
         es.rescale_weights[symbol] = 5
 
-    for i in range(10):
+    for i in range(20):
         print(f"=== {i+1:>2} ===")
         es.compute_warping_directions()
         es.plot_directions(symbol={3,4,5}, seriesidx=2, filename=str(directory / f"gradients_{i}.png"))
@@ -62,3 +62,6 @@ def test_example1_v2():
         es.plot_symbols(filename=str(directory / f"symbols_{i}.png"))
 
     es.plot_symbols(filename=str(directory / f"symbols.png"))
+    np.save(str(directory / "series.npy"), es.warped_series)
+    s = es.warped_series * es._smoothed_counts.T[np.newaxis, :, :]
+    np.save(str(directory / "seriesw.npy"), s)

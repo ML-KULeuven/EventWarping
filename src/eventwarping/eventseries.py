@@ -127,6 +127,7 @@ class EventSeries:
         :param intonly: See EventWarping
         :param selected: Boolean list. Only use the i-th series if selected[i] is True
         :param constraints: See EventWarping
+        :param max_series_length: See from_setlist
         :return: EventWarping object
         """
         import ast
@@ -151,7 +152,7 @@ class EventSeries:
         :param window: See EventWarping
         :param intonly: See EventWarping
         :param constraints: See EventWarping
-        :param max_series_length: lenght of each series (i.e. #itemsets) is truncated to this size
+        :param max_series_length: Length of each series (i.e. #itemsets) is truncated to this size
         :return: EventWarping object
         """
         es = EventSeries(window=window, intonly=intonly, constraints=constraints)
@@ -202,6 +203,7 @@ class EventSeries:
         :param window: See EventWarping
         :param intonly: See EventWarping
         :param constraints: See EventWarping
+        :param max_series_length: Length of each series (i.e. #itemsets) is truncated to this size
         :return: EventWarping object
         """
         es = EventSeries(window, intonly=intonly, constraints=constraints)
@@ -240,6 +242,25 @@ class EventSeries:
         return es
 
     def insert_spacers(self, nb_spacers):
+        """Introduce empty events in between events.
+
+        This can be used when allow_merge is set to 1, thus no merging allowed. By moving the
+        empty slots, warping is still possible.
+
+        For example:
+
+            | A | B | A | A |
+            | A | A | B | A |
+
+        Will be aligned to (with allow_merge set to 1):
+
+            |   | A | B | A | A |   |   |   |
+            | A | A | B | A |   |   |   |   |
+
+        Whereas otherwise, no realignment would be possible.
+
+        :param nb_spacers: Number of empty events to insert between two events.
+        """
         if self._warped_series is None:
             self._warped_series = self.series
         new_nb_events = (1+nb_spacers)*(self.nb_events-1)+1
@@ -783,6 +804,8 @@ class EventSeries:
 
         ax = axs[1]
         im = self.get_smoothed_counts(window=5, ignore_merged=True)
+        thr = np.quantile(im, 0.9)
+        im[im < thr] = 0
         ax.imshow(im)
         ax.set_xlabel('Events')
         ax.set_ylabel('Symbol')
