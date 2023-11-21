@@ -123,7 +123,7 @@ def test_example6():
     print("")
     fn = Path(__file__).parent / "rsrc" / "example6.txt"
 
-    es = EventSeries.from_file(fn, window=3, constraints=MaxMergeConstraints(p=2))
+    es = EventSeries.from_file(fn, window=3, constraints=[MaxMergeEventConstraints(2)])
     print('Original')
     print(es.format_warped_series())
 
@@ -140,12 +140,22 @@ def test_example6():
 
 
 def test_example7():
+    """To check:
+
+    - Are the B's aligned
+    - Are the A's aligned in the end
+
+    This is suboptimal
+        |     | B   |     |   A |   A |     |
+        |   A | B   |     |     |   A |   A |
+    This is better? TODO
+        |     | B   |     |   A |   A |     |
+        |   A | B   |     |   A |   A |     |
+
+    """
     print("")
     fn = Path(__file__).parent / "rsrc" / "example7.txt"
-
-    es = EventSeries.from_file(fn, window=5)
-    es.allow_merge = 1
-    es._use_warping_v2 = True
+    es = EventSeries.from_file(fn, window=5, constraints=[MaxMergeEventConstraints(1)])
     print('Original')
     print(es.format_warped_series())
 
@@ -163,9 +173,7 @@ def test_example8():
     print("")
     fn = Path(__file__).parent / "rsrc" / "example8.txt"
 
-    es = EventSeries.from_file(fn, window=5,
-                               constraints=[MaxMergeEventConstraints(1)])
-    es._use_warping_v2 = True
+    es = EventSeries.from_file(fn, window=5, constraints=[MaxMergeEventConstraints(1)])
     print(f'Original\n{es.format_warped_series()}')
     es.insert_spacers(1)
     print(f'Spaced\n{es.format_warped_series()}')

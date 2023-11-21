@@ -49,25 +49,19 @@ class EventSeries:
         self._warping_inertia = None
         self._zero_crossings = None
         self._warped_series: Optional[npt.NDArray[np.int]] = None
+        self._warped_series_ec: Optional[npt.NDArray[np.int]] = None  # Event counts
         self._versions = [0, 0, 0, 0]  # V_WC, V_RC, V_WD, V_WS
         self.constraints = constraints
         if self.constraints is not None:
             for constraint in self.constraints:
                 constraint.es = self
 
-        # Use the new warping, with constraints built in
-        # Otherwise we cannot (?) guarantee that the following does not happen:
-        # | A |   | A |
-        # to
-        # |   | A |   |
-        self._use_warping_v2 = False
-        # self.allow_merge = np.inf  # Limit number of merges to this value (per symbol), should be >0
-
     def reset(self):
         self._windowed_counts = None
         self._rescaled_counts = None
         self._warping_directions = None
         self._warped_series = None
+        self._warped_series_ec = None
         self._versions = [0, 0, 0, 0]
 
     def warp(self, iterations=1, restart=False, plot=None):
@@ -537,46 +531,45 @@ class EventSeries:
             prev_c, cost = 2, cc[r, 2]
         path = [(r, r + prev_c - 1)]
 
-        if self._use_warping_v2:
-            if ps is None:
-                raise ValueError("Warping v2 requires a ps argument")
-            for r in reversed(range(cc.shape[0] - 1)):
-                prev_c = ps[r+1, prev_c]
-                if prev_c == -1:
-                    return None
-                path.append((r, r + prev_c - 1))
-            path.reverse()
-            return path
-
+        if ps is None:
+            raise ValueError("Warping v2 requires a ps argument")
         for r in reversed(range(cc.shape[0] - 1)):
-            if prev_c == 0:
-                prev_c, cost = 1, cc[r, 1]
-                if cc[r, 0] < cost:
-                    prev_c, cost = 0, cc[r, 0]
-            elif prev_c == 1:
-                prev_c, cost = 1, cc[r, 1]
-                if cc[r, 0] < cost:
-                    prev_c, cost = 0, cc[r, 0]
-                if cc[r, 2] < cost:
-                    prev_c, cost = 2, cc[r, 2]
-            elif prev_c == 2:
-                prev_c, cost = 1, cc[r, 1]
-                if cc[r, 2] < cost:
-                    prev_c, cost = 2, cc[r, 2]
-                if cc[r, 0] < cost:
-                    prev_c, cost = 0, cc[r, 0]
-            else:
-                raise Exception(f"{prev_c=}")
+            prev_c = ps[r+1, prev_c]
+            if prev_c == -1:
+                return None
             path.append((r, r + prev_c - 1))
         path.reverse()
         return path
+
+        # for r in reversed(range(cc.shape[0] - 1)):
+        #     if prev_c == 0:
+        #         prev_c, cost = 1, cc[r, 1]
+        #         if cc[r, 0] < cost:
+        #             prev_c, cost = 0, cc[r, 0]
+        #     elif prev_c == 1:
+        #         prev_c, cost = 1, cc[r, 1]
+        #         if cc[r, 0] < cost:
+        #             prev_c, cost = 0, cc[r, 0]
+        #         if cc[r, 2] < cost:
+        #             prev_c, cost = 2, cc[r, 2]
+        #     elif prev_c == 2:
+        #         prev_c, cost = 1, cc[r, 1]
+        #         if cc[r, 2] < cost:
+        #             prev_c, cost = 2, cc[r, 2]
+        #         if cc[r, 0] < cost:
+        #             prev_c, cost = 0, cc[r, 0]
+        #     else:
+        #         raise Exception(f"{prev_c=}")
+        #     path.append((r, r + prev_c - 1))
+        # path.reverse()
+        # return path
 
     def _allow_merge(self, merged_cnts_s, merged_cnts_e, a, b):
         if self.constraints is None:
             return True
         for constraint in self.constraints:
-            result = constraint.allow_merge(merged_cnts_s, merged_cnts_e, a, b)
-            if result is False:
+            allowed = constraint.allow_merge(merged_cnts_s, merged_cnts_e, a, b)
+            if not allowed:
                 return False
         return True
 
@@ -585,8 +578,11 @@ class EventSeries:
         # If warping_directions has not yet been recomputed, do so
         if self._versions[V_WD] == self._versions[V_WS]:
             self.compute_warping_directions()
+        if self._warped_series_ec is None:
+            self._warped_series_ec = self._warped_series.max(axis=2)
 
         ws = np.zeros((self.nb_series, self.nb_events, self.nb_symbols), dtype=int)
+        wsec = np.zeros((self.nb_series, self.nb_events), dtype=int)
 
         # compute constraints
         # if self.constraints is not None:
@@ -596,10 +592,9 @@ class EventSeries:
 
         # Dynamic programming with window size 3. We only allow a shift of one or zero.
         cc = np.zeros((self.nb_events, 3))  # cumulative cost
-        if self._use_warping_v2:
-            ps = np.zeros((self.nb_events, 3), dtype=int)  # previous state
-            scs = np.zeros((self.nb_events, 3, self.nb_symbols), dtype=int)  # summed counts symbols
-            sce = np.zeros((self.nb_events, 3), dtype=int)  # summed counts events
+        ps = np.zeros((self.nb_events, 3), dtype=int)  # previous state
+        scs = np.zeros((self.nb_events, 3, self.nb_symbols), dtype=int)  # summed counts symbols
+        sce = np.zeros((self.nb_events, 3), dtype=int)  # summed counts events
 
         for sei in range(self.nb_series):
             # Aggregated direction
@@ -613,94 +608,82 @@ class EventSeries:
 
             # Initialize datastructures
             cc[:, :] = 0
-            if self._use_warping_v2:
-                ps[:, :] = 0
-                scs[:, :, :] = 0
-                sce[:, :] = 0
+            ps[:, :] = 0
+            scs[:, :, :] = 0
+            sce[:, :] = 0
 
             # Initialize first row
             cc[0, 0] = np.inf   # First element cannot move backward
             cc[0, 1] = 0
             cc[0, 2] = -wss[0]
-            if self._use_warping_v2:
-                ps[0, :] = [0, 1, 2]
-                scs[0, 0, :] = 0
-                scs[0, 1, :] = self._warped_series[sei, 0, :]
-                scs[0, 2, :] = scs[0, 1, :]
-                sce[0, 0] = 0
-                sce[0, 1] = np.max(self._warped_series[sei, 0, :])
-                sce[0, 2] = sce[0, 1]
-            else:
-                ps = None
-                scs = None
-                sce = None
+            ps[0, :] = [0, 1, 2]
+            scs[0, 0, :] = 0
+            scs[0, 1, :] = self._warped_series[sei, 0, :]
+            scs[0, 2, :] = scs[0, 1, :]
+            sce[0, 0] = 0
+            sce[0, 1] = self._warped_series_ec[sei, 0]
+            sce[0, 2] = sce[0, 1]
             for i in range(1, len(wss)):
                 # Backward
-                if not self._use_warping_v2:
-                    #              Stay one behind
-                    #              |           Move on back from diagonal
-                    #              |           |             Cost to move backward is the positive gradient
-                    cc[i, 0] = min(cc[i-1, 0], cc[i-1, 1]) + wss[i] if not constraint_matrix[sei, i, 0] else np.inf
-                else:
-                    cc[i, 0] = np.inf
-                    ps[i, 1] = -1
-                    for prevs in [1, 0]:
-                        if prevs == 1:
-                            merged_cnts_s = scs[i-1, prevs] + self._warped_series[sei, i, :]
-                            merged_cnts_e = sce[i-1, prevs] + np.max(self._warped_series[sei, i, :])
-                            args = scs[i-1, prevs], self._warped_series[sei, i, :]
-                        else:
-                            merged_cnts_s = self._warped_series[sei, i, :]
-                            merged_cnts_e = np.max(self._warped_series[sei, i, :])
-                            args = None, self._warped_series[sei, i, :]
-                        if cc[i - 1, prevs] < cc[i, 0] and self._allow_merge(merged_cnts_s, merged_cnts_e, *args):
-                            cc[i, 0] = cc[i - 1, prevs]
-                            ps[i, 0] = prevs
-                            scs[i, 0] = merged_cnts_s
-                            sce[i, 0] = merged_cnts_e
-                    cc[i, 0] += wss[i]
+                #              Stay one behind
+                #              |           Move on back from diagonal
+                #              |           |             Cost to move backward is the positive gradient
+                # cc[i, 0] = min(cc[i-1, 0], cc[i-1, 1]) + wss[i]
+                cc[i, 0] = np.inf
+                ps[i, 1] = -1
+                for prevs in [1, 0]:
+                    if prevs == 1:
+                        merged_cnts_s = scs[i-1, prevs] + self._warped_series[sei, i, :]
+                        merged_cnts_e = sce[i-1, prevs] + self._warped_series_ec[sei, i]
+                        args = scs[i-1, prevs], self._warped_series[sei, i, :]
+                    else:
+                        merged_cnts_s = self._warped_series[sei, i, :]
+                        merged_cnts_e = np.max(self._warped_series[sei, i, :])
+                        args = None, self._warped_series[sei, i, :]
+                    if cc[i - 1, prevs] < cc[i, 0] and self._allow_merge(merged_cnts_s, merged_cnts_e, *args):
+                        cc[i, 0] = cc[i - 1, prevs]
+                        ps[i, 0] = prevs
+                        scs[i, 0] = merged_cnts_s
+                        sce[i, 0] = merged_cnts_e
+                cc[i, 0] += wss[i]
                 # Stay
-                if not self._use_warping_v2:
-                    #              Move back to diagonal from one behind
-                    #              |           Stay on diagonal
-                    #              |           |           Move to diagonal from one ahead (thus stay)
-                    #              |           |           |                Inertia (reward for staying)
-                    cc[i, 1] = min(cc[i-1, 0], cc[i-1, 1], cc[i-1, 2]) - wsi[i] if not constraint_matrix[sei, i, 1] else np.inf
-                else:
-                    cc[i, 1] = np.inf
-                    ps[i, 1] = -1
-                    for prevs in [1, 0, 2]:
-                        if prevs == 2:
-                            merged_cnts_s = scs[i - 1, prevs] + self._warped_series[sei, i, :]
-                            merged_cnts_e = sce[i - 1, prevs] + np.max(self._warped_series[sei, i, :])
-                            args = scs[i - 1, prevs], self._warped_series[sei, i, :]
-                        else:
-                            merged_cnts_s = self._warped_series[sei, i, :]
-                            merged_cnts_e = np.max(self._warped_series[sei, i, :])
-                            args = None, self._warped_series[sei, i, :]
-                        if cc[i - 1, prevs] < cc[i, 1] and self._allow_merge(merged_cnts_s, merged_cnts_e, *args):
-                            cc[i, 1] = cc[i - 1, prevs]
-                            ps[i, 1] = prevs
-                            scs[i, 1] = merged_cnts_s
-                            sce[i, 1] = merged_cnts_e
-                    cc[i, 1] += -wsi[i]
+                #              Move back to diagonal from one behind
+                #              |           Stay on diagonal
+                #              |           |           Move to diagonal from one ahead (thus stay)
+                #              |           |           |                Inertia (reward for staying)
+                # cc[i, 1] = min(cc[i-1, 0], cc[i-1, 1], cc[i-1, 2]) - wsi[i]
+                cc[i, 1] = np.inf
+                ps[i, 1] = -1
+                for prevs in [1, 0, 2]:
+                    if prevs == 2:
+                        merged_cnts_s = scs[i - 1, prevs] + self._warped_series[sei, i, :]
+                        merged_cnts_e = sce[i - 1, prevs] + self._warped_series_ec[sei, i]
+                        args = scs[i - 1, prevs], self._warped_series[sei, i, :]
+                    else:
+                        merged_cnts_s = self._warped_series[sei, i, :]
+                        merged_cnts_e = np.max(self._warped_series[sei, i, :])
+                        args = None, self._warped_series[sei, i, :]
+                    if cc[i - 1, prevs] < cc[i, 1] and self._allow_merge(merged_cnts_s, merged_cnts_e, *args):
+                        cc[i, 1] = cc[i - 1, prevs]
+                        ps[i, 1] = prevs
+                        scs[i, 1] = merged_cnts_s
+                        sce[i, 1] = merged_cnts_e
+                cc[i, 1] += -wsi[i]
                 # Forward
-                if not self._use_warping_v2:
-                    #              Skip diagonal and move from one back for previous to one ahead for this one
-                    #              |           Move one forward from diagonal
-                    #              |           |           Stay one forward
-                    #              |           |           |             Cost to move forward is the negative gradient
-                    cc[i, 2] = min(cc[i-1, 0], cc[i-1, 1], cc[i-1, 2]) + -wss[i] if not constraint_matrix[sei, i, 2] else np.inf
-                else:
-                    cc[i, 2] = np.inf
-                    ps[i, 2] = -1
-                    for prevs in [1, 0, 2]:
-                        if cc[i - 1, prevs] < cc[i, 2]:
-                            cc[i, 2] = cc[i - 1, prevs]
-                            ps[i, 2] = prevs
-                            scs[i, 2] = self._warped_series[sei, i, :]
-                            sce[i, 2] = np.max(self._warped_series[sei, i, :])
-                    cc[i, 2] += -wss[i]
+                #              Skip diagonal and move from one back for previous to one ahead for this one
+                #              |           Move one forward from diagonal
+                #              |           |           Stay one forward
+                #              |           |           |             Cost to move forward is the negative gradient
+                # cc[i, 2] = min(cc[i-1, 0], cc[i-1, 1], cc[i-1, 2]) + -wss[i]
+                cc[i, 2] = np.inf
+                ps[i, 2] = -1
+                for prevs in [1, 0, 2]:
+                    if cc[i - 1, prevs] < cc[i, 2]:
+                        cc[i, 2] = cc[i - 1, prevs]
+                        ps[i, 2] = prevs
+                        scs[i, 2] = self._warped_series[sei, i, :]
+                        sce[i, 2] = self._warped_series_ec[sei, i]
+                cc[i, 2] += -wss[i]
             cc[len(wss) - 1, 2] = np.inf  # Last element cannot move forward
             path = self._best_warped_path(cc, ps)
             if path is None:
@@ -710,8 +693,10 @@ class EventSeries:
             # Do realignment
             for i_from, i_to in path:
                 ws[sei, i_to, :] = ws[sei, i_to, :] + self._warped_series[sei, i_from, :]
+                wsec[sei, i_to] = wsec[sei, i_to] + self._warped_series_ec[sei, i_from]
 
         self._warped_series = ws
+        self._warped_series_ec = wsec
         self._versions[V_WS] += 1
         return self._warped_series
 
