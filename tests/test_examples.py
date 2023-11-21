@@ -6,7 +6,7 @@ from pathlib import Path
 import os
 
 from eventwarping.eventseries import EventSeries
-from eventwarping.constraints import MaxMergeConstraints
+from eventwarping.constraints import MaxMergeEventConstraints
 
 
 # If environment variable TESTDIR is set, save figures to this
@@ -163,8 +163,8 @@ def test_example8():
     print("")
     fn = Path(__file__).parent / "rsrc" / "example8.txt"
 
-    es = EventSeries.from_file(fn, window=5)
-    es.allow_merge = 1
+    es = EventSeries.from_file(fn, window=5,
+                               constraints=[MaxMergeEventConstraints(1)])
     es._use_warping_v2 = True
     print(f'Original\n{es.format_warped_series()}')
     es.insert_spacers(1)

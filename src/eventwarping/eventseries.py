@@ -24,7 +24,7 @@ class EventSeries:
         :param intonly: No dictionary for symbols used, the symbols are integer indices,
             symbols are integers starting from 0 and range to the largest integer used.
             This is not recommended for sparse sets of integers.
-        :param constraints: Child class inheriting from ConstraintsBaseClass
+        :param constraints: List of objects inheriting from ConstraintsBaseClass
         """
         if window % 2 == 0:
             raise ValueError(f"Argument window should be an uneven number.")
@@ -52,7 +52,8 @@ class EventSeries:
         self._versions = [0, 0, 0, 0]  # V_WC, V_RC, V_WD, V_WS
         self.constraints = constraints
         if self.constraints is not None:
-            self.constraints.es = self
+            for constraint in self.constraints:
+                constraint.es = self
 
         # Use the new warping, with constraints built in
         # Otherwise we cannot (?) guarantee that the following does not happen:
@@ -60,7 +61,7 @@ class EventSeries:
         # to
         # |   | A |   |
         self._use_warping_v2 = False
-        self.allow_merge = np.inf  # Limit number of merges to this value (per symbol), should be >0
+        # self.allow_merge = np.inf  # Limit number of merges to this value (per symbol), should be >0
 
     def reset(self):
         self._windowed_counts = None
@@ -570,6 +571,15 @@ class EventSeries:
         path.reverse()
         return path
 
+    def _allow_merge(self, merged_cnts_s, merged_cnts_e, a, b):
+        if self.constraints is None:
+            return True
+        for constraint in self.constraints:
+            result = constraint.allow_merge(merged_cnts_s, merged_cnts_e, a, b)
+            if result is False:
+                return False
+        return True
+
     def compute_warped_series(self):
         """Warp events by maximally one step (left, right, or none)."""
         # If warping_directions has not yet been recomputed, do so
@@ -579,16 +589,17 @@ class EventSeries:
         ws = np.zeros((self.nb_series, self.nb_events, self.nb_symbols), dtype=int)
 
         # compute constraints
-        if self.constraints is not None:
-            constraint_matrix = self.constraints.calculate_constraint_matrix()
-        else:
-            constraint_matrix = np.zeros((self.nb_series, self.nb_events, 3), dtype=bool)
+        # if self.constraints is not None:
+        #     constraint_matrix = self.constraints.calculate_constraint_matrix()
+        # else:
+        #     constraint_matrix = np.zeros((self.nb_series, self.nb_events, 3), dtype=bool)
 
         # Dynamic programming with window size 3. We only allow a shift of one or zero.
         cc = np.zeros((self.nb_events, 3))  # cumulative cost
         if self._use_warping_v2:
             ps = np.zeros((self.nb_events, 3), dtype=int)  # previous state
-            sc = np.zeros((self.nb_events, 3, self.nb_symbols), dtype=int)  # summed counts
+            scs = np.zeros((self.nb_events, 3, self.nb_symbols), dtype=int)  # summed counts symbols
+            sce = np.zeros((self.nb_events, 3), dtype=int)  # summed counts events
 
         for sei in range(self.nb_series):
             # Aggregated direction
@@ -604,7 +615,8 @@ class EventSeries:
             cc[:, :] = 0
             if self._use_warping_v2:
                 ps[:, :] = 0
-                sc[:, :, :] = 0
+                scs[:, :, :] = 0
+                sce[:, :] = 0
 
             # Initialize first row
             cc[0, 0] = np.inf   # First element cannot move backward
@@ -612,12 +624,16 @@ class EventSeries:
             cc[0, 2] = -wss[0]
             if self._use_warping_v2:
                 ps[0, :] = [0, 1, 2]
-                sc[0, 0, :] = 0
-                sc[0, 1, :] = self._warped_series[sei, 0, :]
-                sc[0, 2, :] = self._warped_series[sei, 0, :]
+                scs[0, 0, :] = 0
+                scs[0, 1, :] = self._warped_series[sei, 0, :]
+                scs[0, 2, :] = scs[0, 1, :]
+                sce[0, 0] = 0
+                sce[0, 1] = np.max(self._warped_series[sei, 0, :])
+                sce[0, 2] = sce[0, 1]
             else:
                 ps = None
-                sc = None
+                scs = None
+                sce = None
             for i in range(1, len(wss)):
                 # Backward
                 if not self._use_warping_v2:
@@ -630,13 +646,18 @@ class EventSeries:
                     ps[i, 1] = -1
                     for prevs in [1, 0]:
                         if prevs == 1:
-                            merged_cnts = sc[i-1, prevs] + self._warped_series[sei, i, :]
+                            merged_cnts_s = scs[i-1, prevs] + self._warped_series[sei, i, :]
+                            merged_cnts_e = sce[i-1, prevs] + np.max(self._warped_series[sei, i, :])
+                            args = scs[i-1, prevs], self._warped_series[sei, i, :]
                         else:
-                            merged_cnts = self._warped_series[sei, i, :]
-                        if cc[i - 1, prevs] < cc[i, 0] and np.all(merged_cnts <= self.allow_merge):
+                            merged_cnts_s = self._warped_series[sei, i, :]
+                            merged_cnts_e = np.max(self._warped_series[sei, i, :])
+                            args = None, self._warped_series[sei, i, :]
+                        if cc[i - 1, prevs] < cc[i, 0] and self._allow_merge(merged_cnts_s, merged_cnts_e, *args):
                             cc[i, 0] = cc[i - 1, prevs]
                             ps[i, 0] = prevs
-                            sc[i, 0] = merged_cnts
+                            scs[i, 0] = merged_cnts_s
+                            sce[i, 0] = merged_cnts_e
                     cc[i, 0] += wss[i]
                 # Stay
                 if not self._use_warping_v2:
@@ -650,13 +671,18 @@ class EventSeries:
                     ps[i, 1] = -1
                     for prevs in [1, 0, 2]:
                         if prevs == 2:
-                            merged_cnts = sc[i - 1, prevs] + self._warped_series[sei, i, :]
+                            merged_cnts_s = scs[i - 1, prevs] + self._warped_series[sei, i, :]
+                            merged_cnts_e = sce[i - 1, prevs] + np.max(self._warped_series[sei, i, :])
+                            args = scs[i - 1, prevs], self._warped_series[sei, i, :]
                         else:
-                            merged_cnts = self._warped_series[sei, i, :]
-                        if cc[i - 1, prevs] < cc[i, 1] and np.all(merged_cnts <= self.allow_merge):
+                            merged_cnts_s = self._warped_series[sei, i, :]
+                            merged_cnts_e = np.max(self._warped_series[sei, i, :])
+                            args = None, self._warped_series[sei, i, :]
+                        if cc[i - 1, prevs] < cc[i, 1] and self._allow_merge(merged_cnts_s, merged_cnts_e, *args):
                             cc[i, 1] = cc[i - 1, prevs]
                             ps[i, 1] = prevs
-                            sc[i, 1] = merged_cnts
+                            scs[i, 1] = merged_cnts_s
+                            sce[i, 1] = merged_cnts_e
                     cc[i, 1] += -wsi[i]
                 # Forward
                 if not self._use_warping_v2:
@@ -672,7 +698,8 @@ class EventSeries:
                         if cc[i - 1, prevs] < cc[i, 2]:
                             cc[i, 2] = cc[i - 1, prevs]
                             ps[i, 2] = prevs
-                            sc[i, 2] = self._warped_series[sei, i, :]
+                            scs[i, 2] = self._warped_series[sei, i, :]
+                            sce[i, 2] = np.max(self._warped_series[sei, i, :])
                     cc[i, 2] += -wss[i]
             cc[len(wss) - 1, 2] = np.inf  # Last element cannot move forward
             path = self._best_warped_path(cc, ps)
