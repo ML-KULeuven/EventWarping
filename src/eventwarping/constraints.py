@@ -2,7 +2,7 @@ import numpy as np
 from abc import ABC, abstractmethod
 
 
-class ConstraintsBaseClass(ABC):
+class ConstraintBaseClass(ABC):
     def __init__(self, es=None):
         self._es = es
 
@@ -30,7 +30,7 @@ class ConstraintsBaseClass(ABC):
     #     raise NotImplementedError()
 
 
-class MaxMergeSymbolConstraints(ConstraintsBaseClass):
+class MaxMergeSymbolConstraint(ConstraintBaseClass):
     """Allow merging events if no symbol is merged more than k times."""
     def __init__(self, k=1, es=None):
         self.k = k
@@ -40,7 +40,7 @@ class MaxMergeSymbolConstraints(ConstraintsBaseClass):
         return np.all(merged_cnts_s <= self.k)
 
 
-class MaxMergeEventConstraints(ConstraintsBaseClass):
+class MaxMergeEventConstraint(ConstraintBaseClass):
     """Allow merging up to k events."""
     def __init__(self, k=1, es=None):
         self.k = k
@@ -50,7 +50,7 @@ class MaxMergeEventConstraints(ConstraintsBaseClass):
         return np.all(merged_cnts_e <= self.k)
 
 
-class MaxMergeEventIfSameConstraints(ConstraintsBaseClass):
+class MaxMergeEventIfSameConstraint(ConstraintBaseClass):
     """Allow merging up to k events if the events are identical."""
     def __init__(self, k=1, es=None):
         self.k = k
@@ -62,7 +62,7 @@ class MaxMergeEventIfSameConstraints(ConstraintsBaseClass):
         return np.all(merged_cnts_e <= self.k)
 
 
-class MaxMergeSymbolSetConstraints(ConstraintsBaseClass):
+class MaxMergeSymbolSetConstraint(ConstraintBaseClass):
     """Allow merging events if none of the given symbols are merged more than k times."""
     def __init__(self, k=1, symbols=None, es=None):
         self.k = k

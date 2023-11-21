@@ -6,7 +6,7 @@ from pathlib import Path
 import os
 
 from eventwarping.eventseries import EventSeries
-from eventwarping.constraints import MaxMergeEventConstraints, MaxMergeEventIfSameConstraints
+from eventwarping.constraints import MaxMergeEventConstraint, MaxMergeEventIfSameConstraint
 
 
 # If environment variable TESTDIR is set, save figures to this
@@ -123,7 +123,7 @@ def test_example6():
     print("")
     fn = Path(__file__).parent / "rsrc" / "example6.txt"
 
-    es = EventSeries.from_file(fn, window=3, constraints=[MaxMergeEventConstraints(2)])
+    es = EventSeries.from_file(fn, window=3, constraints=[MaxMergeEventConstraint(2)])
     print('Original')
     print(es.format_warped_series())
 
@@ -151,7 +151,7 @@ def test_example7():
     """
     print("")
     fn = Path(__file__).parent / "rsrc" / "example7.txt"
-    es = EventSeries.from_file(fn, window=5, constraints=[MaxMergeEventConstraints(1)])
+    es = EventSeries.from_file(fn, window=5, constraints=[MaxMergeEventConstraint(1)])
     print('Original')
     print(es.format_warped_series())
 
@@ -181,7 +181,7 @@ def test_example7b():
     """
     print("")
     fn = Path(__file__).parent / "rsrc" / "example7.txt"
-    es = EventSeries.from_file(fn, window=5, constraints=[MaxMergeEventIfSameConstraints(2)])
+    es = EventSeries.from_file(fn, window=5, constraints=[MaxMergeEventIfSameConstraint(2)])
     print('Original')
     print(es.format_warped_series())
 
@@ -197,7 +197,7 @@ def test_example8():
     print("")
     fn = Path(__file__).parent / "rsrc" / "example8.txt"
 
-    es = EventSeries.from_file(fn, window=5, constraints=[MaxMergeEventConstraints(1)])
+    es = EventSeries.from_file(fn, window=5, constraints=[MaxMergeEventConstraint(1)])
     print(f'Original\n{es.format_warped_series()}')
     es.insert_spacers(1)
     print(f'Spaced\n{es.format_warped_series()}')
