@@ -1,3 +1,4 @@
 apnea
 .idea
 *.egg-info
+pytest.ini

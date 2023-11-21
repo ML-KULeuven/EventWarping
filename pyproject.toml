@@ -25,6 +25,7 @@ dependencies = ["numpy", "scipy"]
 [project.optional-dependencies]
 tests = [
   'pytest',
+  'pytest-env',
   'pytest-benchmark[histogram]>=3.2.1',
   'matplotlib'
 ]

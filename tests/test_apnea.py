@@ -65,3 +65,5 @@ def test_example1_v2():
     np.save(str(directory / "series.npy"), es.warped_series)
     s = es.warped_series * es._smoothed_counts.T[np.newaxis, :, :]
     np.save(str(directory / "seriesw.npy"), s)
+
+    print(es.get_symbol_information())

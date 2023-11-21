@@ -5,7 +5,7 @@ import math
 
 import numpy as np
 import numpy.typing as npt
-from scipy import signal
+from scipy import signal, special
 
 
 V_WC = 0  # Index for version of windowed counts
@@ -504,6 +504,22 @@ class EventSeries:
         if self._warping_inertia is not None:
             return self._warping_inertia
         return self.compute_warping_directions()
+
+    def get_symbol_information(self):
+        """
+        Compute 1-entropy/max_entropy of smoothed counts per symbol
+
+        :return:
+        """
+        max_entropy = np.log(1 / self.nb_events)
+        # -sum p(x) log(p(x))
+        # Make densities from smoothed counts
+        part = np.sum(self._smoothed_counts, axis=1)
+        part[part == 0] = 1
+        dens = self._smoothed_counts / part[:, np.newaxis]
+        entr = special.entr(dens).sum(axis=1)
+        # entr = - np.sum(np.multiply(dens, np.log2(dens)), axis=1)
+        return 1 - entr / max_entropy
 
     def _best_warped_path(self, cc, ps=None):
         """
