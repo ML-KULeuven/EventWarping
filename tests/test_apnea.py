@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 
 from eventwarping.eventseries import EventSeries
 from eventwarping.formats import setlistfile2setlistsfile
+from eventwarping.constraints import *
 
 # If environment variable TESTDIR is set, save figures to this
 # directory, otherwise to the test directory
@@ -45,9 +46,17 @@ def test_example1():
 
 def test_example1_v2():
     fn = get_data("MST_M03_0004086_itemsets_series.txt")
-    es = EventSeries.from_setlistfile(fn, window=5, intonly=True)
-    es._use_warping_v2 = True
-    es.allow_merge = 1
+    constraints = [
+        MaxMergeSymbolConstraint(5),
+        NoXorMergeSymbolSetConstraint(range(5, 12)),
+        NoXorMergeSymbolSetConstraint(range(12, 19)),
+        NoXorMergeSymbolSetConstraint(range(19, 26)),
+        NoXorMergeSymbolSetConstraint(range(26, 33))]
+    # constraints = [
+    #     MaxMergeEventConstraint(1)
+    # ]
+    es = EventSeries.from_setlistfile(fn, window=5, intonly=True,
+                                      constraints=constraints)
     es.insert_spacers(1)
     # Prefer to group initial / end states
     for symbol in [1, 2, 3, 4]:

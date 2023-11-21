@@ -73,6 +73,19 @@ class MaxMergeSymbolSetConstraint(ConstraintBaseClass):
         return np.all(merged_cnts_s[self.symbols] <= self.k)
 
 
+class NoXorMergeSymbolSetConstraint(ConstraintBaseClass):
+    """Allow merging events if none of the given symbols are merged with each other,
+    except if it is the same symbol."""
+    def __init__(self, symbols=None, es=None):
+        self.symbols = symbols
+        super().__init__(es=es)
+
+    def allow_merge(self, merged_cnts_s, merged_cnts_e, a, b):
+        if np.sum(np.sign(merged_cnts_s[self.symbols])) > 1:
+            return False
+        return True
+
+
 # class MaxMergeConstraints(ConstraintsBaseClass):
 #     def __init__(self, p=3, per_symbol=True, es=None):
 #         super().__init__(es=es)
@@ -92,7 +105,6 @@ class MaxMergeSymbolSetConstraint(ConstraintBaseClass):
 #             if self.per_symbol:
 #                 condition = np.sum((item_count > self.p), 1).astype(bool)
 #             else:
-#                 # TODO: still allows to do |A| |B| to become | |AB| | if p=1
 #                 condition = (np.sum(item_count, axis=1) > self.p).astype(bool)
 #             self.constraint_matrix[j, 1:, 0][condition] = True
 #             self.constraint_matrix[j, :-1, 2][condition] = True
