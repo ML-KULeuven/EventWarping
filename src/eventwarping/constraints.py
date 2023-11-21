@@ -31,6 +31,7 @@ class ConstraintsBaseClass(ABC):
 
 
 class MaxMergeSymbolConstraints(ConstraintsBaseClass):
+    """Allow merging events if no symbol is merged more than k times."""
     def __init__(self, k=1, es=None):
         self.k = k
         super().__init__(es=es)
@@ -40,6 +41,7 @@ class MaxMergeSymbolConstraints(ConstraintsBaseClass):
 
 
 class MaxMergeEventConstraints(ConstraintsBaseClass):
+    """Allow merging up to k events."""
     def __init__(self, k=1, es=None):
         self.k = k
         super().__init__(es=es)
@@ -48,7 +50,20 @@ class MaxMergeEventConstraints(ConstraintsBaseClass):
         return np.all(merged_cnts_e <= self.k)
 
 
+class MaxMergeEventIfSameConstraints(ConstraintsBaseClass):
+    """Allow merging up to k events if the events are identical."""
+    def __init__(self, k=1, es=None):
+        self.k = k
+        super().__init__(es=es)
+
+    def allow_merge(self, merged_cnts_s, merged_cnts_e, a, b):
+        if a is not None and np.any(a) and np.any(b) and not np.array_equal(np.sign(a), np.sign(b)):
+            return False
+        return np.all(merged_cnts_e <= self.k)
+
+
 class MaxMergeSymbolSetConstraints(ConstraintsBaseClass):
+    """Allow merging events if none of the given symbols are merged more than k times."""
     def __init__(self, k=1, symbols=None, es=None):
         self.k = k
         self.symbols = symbols

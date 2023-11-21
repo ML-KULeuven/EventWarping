@@ -6,7 +6,7 @@ from pathlib import Path
 import os
 
 from eventwarping.eventseries import EventSeries
-from eventwarping.constraints import MaxMergeEventConstraints
+from eventwarping.constraints import MaxMergeEventConstraints, MaxMergeEventIfSameConstraints
 
 
 # If environment variable TESTDIR is set, save figures to this
@@ -142,15 +142,11 @@ def test_example6():
 def test_example7():
     """To check:
 
-    - Are the B's aligned
-    - Are the A's aligned in the end
+    - Are the Bs aligned
 
     This is suboptimal
         |     | B   |     |   A |   A |     |
         |   A | B   |     |     |   A |   A |
-    This is better? TODO
-        |     | B   |     |   A |   A |     |
-        |   A | B   |     |   A |   A |     |
 
     """
     print("")
@@ -164,6 +160,34 @@ def test_example7():
         es.warp(plot={'filename': str(directory / f'gradients_{i}.png'),
                       'symbol': {0, 1},
                       'seriesidx': 0})
+        print(es.format_warped_series())
+    print('Result')
+    print(es.format_warped_series())
+
+
+def test_example7b():
+    """To check:
+
+    - Are the Bs aligned
+    - Are the As aligned in the end
+
+    This could be suboptimal
+        |     | B   |     |   A |   A |     |
+        |   A | B   |     |     |   A |   A |
+    Thus prefer:
+        |     | B   |     |     |   A |     |
+        |   A | B   |     |     |   A |     |
+
+    """
+    print("")
+    fn = Path(__file__).parent / "rsrc" / "example7.txt"
+    es = EventSeries.from_file(fn, window=5, constraints=[MaxMergeEventIfSameConstraints(2)])
+    print('Original')
+    print(es.format_warped_series())
+
+    for i in range(3):
+        print(f"=== {i} ===")
+        es.warp()
         print(es.format_warped_series())
     print('Result')
     print(es.format_warped_series())
