@@ -181,6 +181,42 @@ class EventSeries:
         return es
 
     @classmethod
+    def from_filepointer(cls, fp, window, intonly=False, constraints=None, max_series_length=None):
+        es = EventSeries(window, intonly=intonly, constraints=constraints)
+        allseries = list()
+        for line in fp.readlines():
+            series = []
+            es.nb_series += 1
+            for events in line.split("|"):
+                events = events.strip()
+                if events != "":
+                    events = [e.strip() for e in events.strip().split(" ") if e.strip() != ""]
+                    for event in events:
+                        if intonly:
+                            if type(event) is not int:
+                                raise ValueError(f"Symbol is not int: {event}")
+                            if event >= es.nb_symbols:
+                                es.nb_symbols = event + 1
+                        else:
+                            if event not in es.symbol2int:
+                                es.symbol2int[event] = es.nb_symbols
+                                es.int2symbol[es.nb_symbols] = event
+                                es.nb_symbols += 1
+                series.append(events)
+            if len(series) > es.nb_events:
+                es.nb_events = len(series)
+            allseries.append(series)
+        if max_series_length:
+            es.nb_events = min(es.nb_events, max_series_length)
+        es.series = np.zeros((es.nb_series, es.nb_events, es.nb_symbols), dtype=int)
+        for sei, series in enumerate(allseries):
+            for evi, events in enumerate(series):
+                for symbol in events:
+                    syi = symbol if intonly else es.symbol2int[symbol]
+                    es.series[sei, evi, syi] = 1
+        return es
+
+    @classmethod
     def from_file(cls, fn, window, intonly=False, constraints=None, max_series_length=None):
         """Convert a simple formatted file to an eventwarping object.
 
@@ -201,39 +237,16 @@ class EventSeries:
         :param max_series_length: Length of each series (i.e. #itemsets) is truncated to this size
         :return: EventWarping object
         """
-        es = EventSeries(window, intonly=intonly, constraints=constraints)
-        allseries = list()
+        es = None
         with fn.open("r") as fp:
-            for line in fp.readlines():
-                series = []
-                es.nb_series += 1
-                for events in line.split("|"):
-                    events = events.strip()
-                    if events != "":
-                        events = [e.strip() for e in events.strip().split(" ") if e.strip() != ""]
-                        for event in events:
-                            if intonly:
-                                if type(event) is not int:
-                                    raise ValueError(f"Symbol is not int: {event}")
-                                if event >= es.nb_symbols:
-                                    es.nb_symbols = event + 1
-                            else:
-                                if event not in es.symbol2int:
-                                    es.symbol2int[event] = es.nb_symbols
-                                    es.int2symbol[es.nb_symbols] = event
-                                    es.nb_symbols += 1
-                    series.append(events)
-                if len(series) > es.nb_events:
-                    es.nb_events = len(series)
-                allseries.append(series)
-        if max_series_length:
-            es.nb_events = min(es.nb_events, max_series_length)
-        es.series = np.zeros((es.nb_series, es.nb_events, es.nb_symbols), dtype=int)
-        for sei, series in enumerate(allseries):
-            for evi, events in enumerate(series):
-                for symbol in events:
-                    syi = symbol if intonly else es.symbol2int[symbol]
-                    es.series[sei, evi, syi] = 1
+            es = cls.from_filepointer(fp, window, intonly, constraints, max_series_length)
+        return es
+
+    @classmethod
+    def from_string(cls, string, window, intonly=False, constraints=None, max_series_length=None):
+        import io
+        fp = io.StringIO(string)
+        es = cls.from_filepointer(fp, window, intonly, constraints, max_series_length)
         return es
 
     def insert_spacers(self, nb_spacers):
