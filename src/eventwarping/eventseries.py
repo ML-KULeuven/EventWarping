@@ -64,6 +64,12 @@ class EventSeries:
         self._warped_series_ec = None
         self._versions = [0, 0, 0, 0]
 
+    def series_changed(self):
+        """Update derived properties after the series changed."""
+        if self.constraints is not None:
+            for constraint in self.constraints:
+                constraint.es = self
+
     def warp(self, iterations=1, restart=False, plot=None):
         if plot is not None:
             import matplotlib.pyplot as plt
@@ -178,6 +184,7 @@ class EventSeries:
                     if not intonly:
                         symbol = es.symbol2int[symbol]
                     es.series[sei, evi, symbol] = 1
+        es.series_changed()
         return es
 
     @classmethod
@@ -214,6 +221,7 @@ class EventSeries:
                 for symbol in events:
                     syi = symbol if intonly else es.symbol2int[symbol]
                     es.series[sei, evi, syi] = 1
+        es.series_changed()
         return es
 
     @classmethod

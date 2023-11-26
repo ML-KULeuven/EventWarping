@@ -72,8 +72,21 @@ class MaxMergeSymbolSetConstraint(ConstraintBaseClass):
     """Allow merging events if none of the given symbols are merged more than k times."""
     def __init__(self, k=1, symbols=None, es=None):
         self.k = k
-        self.symbols = symbols
         super().__init__(es=es)
+        self.symbols = self._translate_symbols(symbols, self._es)
+
+    @classmethod
+    def _translate_symbols(cls, symbols, es):
+        if es is None:
+            return symbols
+        if es.symbol2int is None:
+            return symbols
+        return [es.symbol2int.get(s, s) for s in symbols]
+
+    @ConstraintBaseClass.es.setter
+    def es(self, value):
+        self._es = value
+        self.symbols = self._translate_symbols(self.symbols, self._es)
 
     def allow_merge(self, merged_cnts_s, merged_cnts_e, a, b):
         if a is None or b is None:
@@ -89,8 +102,21 @@ class NoXorMergeSymbolSetConstraint(ConstraintBaseClass):
     But: |A|B| to |AB|| is not if self.symbols is [A,B]
     """
     def __init__(self, symbols=None, es=None):
-        self.symbols = symbols
         super().__init__(es=es)
+        self.symbols = self._translate_symbols(symbols, self._es)
+
+    @classmethod
+    def _translate_symbols(cls, symbols, es):
+        if es is None:
+            return symbols
+        if es.symbol2int is None:
+            return symbols
+        return [es.symbol2int.get(s, s) for s in symbols]
+
+    @ConstraintBaseClass.es.setter
+    def es(self, value):
+        self._es = value
+        self.symbols = self._translate_symbols(self.symbols, self._es)
 
     def allow_merge(self, merged_cnts_s, merged_cnts_e, a, b):
         if a is None or b is None:
