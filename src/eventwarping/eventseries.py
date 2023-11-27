@@ -71,6 +71,11 @@ class EventSeries:
                 constraint.es = self
 
     def warp(self, iterations=1, restart=False, plot=None):
+        for _ in self.warp_yield(iterations=iterations, restart=restart, plot=plot):
+            pass
+        return self.warped_series
+
+    def warp_yield(self, iterations=1, restart=False, plot=None):
         if plot is not None:
             import matplotlib.pyplot as plt
         if restart:
@@ -84,16 +89,6 @@ class EventSeries:
                                                 seriesidx=plot.get("seriesidx", None))
                 fig.savefig(plot['filename'].format(it=it), bbox_inches='tight')
                 plt.close(fig)
-            self.compute_warped_series()
-        return self.warped_series
-
-    def warp_yield(self, iterations=1, restart=False):
-        if restart:
-            self.reset()
-        for it in range(iterations):
-            self.compute_windowed_counts()
-            self.compute_rescaled_counts()
-            self.compute_warping_directions()
             self.compute_warped_series()
             yield self.warped_series
 
@@ -566,7 +561,7 @@ class EventSeries:
         #     if prev_c == 0:
         #         prev_c, cost = 1, cc[r, 1]
         #         if cc[r, 0] < cost:
-        #             prev_c, cost = 0, cc[r, 0]
+      .  #             prev_c, cost = 0, cc[r, 0]
         #     elif prev_c == 1:
         #         prev_c, cost = 1, cc[r, 1]
         #         if cc[r, 0] < cost:
@@ -736,7 +731,9 @@ class EventSeries:
         return self._format_series(self.series)
 
     def format_warped_series(self):
-        return self._format_series(self.warped_series)
+        if self._warped_series is None:
+            raise ValueError(f"No warped series computed yet (use format_series).")
+        return self._format_series(self._warped_series)
 
     def _format_series(self, series):
         # (nb_series, nb_events, nb_symbols)
@@ -767,24 +764,33 @@ class EventSeries:
     def plot_directions(self, symbol=0, seriesidx=None, filename=None):
         import matplotlib as mpl
         import matplotlib.pyplot as plt
-        if type(symbol) is set:
-            pass
-        elif type(symbol) is int:
-            symbol = {symbol}
-        elif isinstance(symbol, collections.Iterable):
-            symbol = set(symbol)
+        if type(symbol) is int:
+            symbol = [symbol]
+        elif type(symbol) is not list and isinstance(symbol, collections.abc.Iterable):
+            symbol = list(symbol)
+        elif symbol is None:
+            symbol = []
+        if type(seriesidx) is int:
+            seriesidx = [seriesidx]
+        elif type(seriesidx) is not list and isinstance(seriesidx, collections.abc.Iterable):
+            seriesidx = list(seriesidx)
+        elif seriesidx is None:
+            seriesidx = []
         nrows = 2
         if self.rescale_active:
             nrows += 1
         if seriesidx is not None:
-            nrows += 2
-            wss = np.multiply(self.warped_series[seriesidx, :, :].T, self.warping_directions).sum(axis=0)
-            wsi = np.multiply(self.warped_series[seriesidx, :, :].T, self.warping_inertia).sum(axis=0)
+            nrows += 2*len(seriesidx)
+            wss, wsi = [], []
+            for si in range(len(seriesidx)):
+                wss.append(np.multiply(self.warped_series[seriesidx[si], :, :].T, self.warping_directions).sum(axis=0))
+                wsi.append(np.multiply(self.warped_series[seriesidx[si], :, :].T, self.warping_inertia).sum(axis=0))
         else:
             wss = None
             wsi = None
-        fig, axs = plt.subplots(nrows=nrows, ncols=len(symbol), sharex=True, sharey='row', figsize=(5*len(symbol), 4))
-        cnts = self.get_counts()
+        fig, axs = plt.subplots(nrows=nrows, ncols=len(symbol), sharex=True, sharey='row',
+                                figsize=(5*len(symbol), 4+len(seriesidx)))
+        cnts = self.get_counts(ignore_merged=True)
         # colors = mpl.cm.get_cmap().colors
         colors = [c["color"] for c in mpl.rcParams["axes.prop_cycle"]]
         # amp = np.max(np.abs(self.warping_directions[list(symbol)]))
@@ -821,19 +827,20 @@ class EventSeries:
             axrow += 1
             # Counts in given series
             if seriesidx is not None:
-                ax = axs[axrow, curidx] if len(symbol) > 1 else axs[axrow]
-                ax.axhline(y=0, color='r', linestyle=':', alpha=0.3)
-                ax.plot(wss, '-+', color=colors[4], label=f"Agg directions for series {seriesidx}")
-                ax.plot(wsi, '-+', color=colors[5], label=f"Agg Inertia for series {seriesidx}")
-                if curidx == 0:
-                    ax.legend(bbox_to_anchor=(-0.1, 1), loc='upper right')
-                axrow += 1
-                ax = axs[axrow, curidx] if len(symbol) > 1 else axs[axrow]
-                cursymbol_cnts = self.warped_series[seriesidx, :, cursymbol]
-                ax.bar(range(len(cursymbol_cnts)), cursymbol_cnts, label=f"Counts for series {seriesidx}")
-                if curidx == 0:
-                    ax.legend(bbox_to_anchor=(-0.1, 1), loc='upper right')
-                axrow += 1
+                for si in range(len(seriesidx)):
+                    ax = axs[axrow, curidx] if len(symbol) > 1 else axs[axrow]
+                    ax.axhline(y=0, color='r', linestyle=':', alpha=0.3)
+                    ax.plot(wss[si], '-+', color=colors[4], label=f"Agg directions for series {seriesidx[si]}")
+                    ax.plot(wsi[si], '-+', color=colors[5], label=f"Agg Inertia for series {seriesidx[si]}")
+                    if curidx == 0:
+                        ax.legend(bbox_to_anchor=(-0.1, 1), loc='upper right')
+                    axrow += 1
+                    ax = axs[axrow, curidx] if len(symbol) > 1 else axs[axrow]
+                    cursymbol_cnts = self.warped_series[seriesidx[si], :, cursymbol]
+                    ax.bar(range(len(cursymbol_cnts)), cursymbol_cnts, label=f"Counts for series {seriesidx[si]}")
+                    if curidx == 0:
+                        ax.legend(bbox_to_anchor=(-0.1, 1), loc='upper right')
+                    axrow += 1
         if filename is not None:
             fig.savefig(filename, bbox_inches='tight')
             plt.close(fig)
