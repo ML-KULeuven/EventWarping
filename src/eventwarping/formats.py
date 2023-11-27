@@ -38,6 +38,18 @@ def setlist2setlists(sl, start, stop, margin):
         if not stop.isdisjoint(s):
             stops.append(i)
     series = []
-    for start, stop in zip(starts, stops):
-        series.append(sl[start - margin:stop + 1 + margin])
+    for startidx, stopidx in zip(starts, stops):
+        # Avoid that the end of a previous segment is included in the margin before the current segment
+        lmargin = 0
+        for _ in range(margin):
+            if not stop.isdisjoint(sl[startidx - lmargin - 1]):
+                break
+            lmargin += 1
+        # Avoid that the start of a next segment is included in the margin after the current segment
+        rmargin = 0
+        for _ in range(margin):
+            if not start.isdisjoint(sl[stopidx + rmargin + 1]):
+                break
+            rmargin += 1
+        series.append(sl[startidx - lmargin:stopidx + 1 + rmargin])
     return series
