@@ -8,10 +8,11 @@ import numpy.typing as npt
 from scipy import signal, special
 
 
-V_WC = 0  # Index for version of windowed counts
-V_RC = 1  # Index for rescaled counts
-V_WD = 2  # Index for version of warping directions
-V_WS = 3  # Index for version of warped series
+# Index for version of
+V_WC = 0  # windowed counts
+V_RC = 1  # rescaled counts
+V_WD = 2  # warping directions
+V_WS = 3  # warped series
 
 
 class EventSeries:
@@ -20,11 +21,12 @@ class EventSeries:
 
         :param window: Window over which can be warped (should be an odd integer).
             Full size of window. For example window=3 means, that symbols one
-            slot to the left and one slot to the right are considered.
+            slot to the left and one slot to the right are considered
         :param intonly: No dictionary for symbols used, the symbols are integer indices,
             symbols are integers starting from 0 and range to the largest integer used.
-            This is not recommended for sparse sets of integers.
+            This is not recommended for sparse sets of integers
         :param constraints: List of objects inheriting from ConstraintsBaseClass
+            See classes in eventwarping.Constraints
         """
         if window % 2 == 0:
             raise ValueError(f"Argument window should be an uneven number.")
@@ -95,7 +97,8 @@ class EventSeries:
     @classmethod
     def from_setlistfile(cls, fn, window, intonly=False, constraints=None, max_series_length=None):
         """Read a setlist file and create an eventwarping object.
-        A file where each line is a list of sets of symbols. Each set represents a time point.
+        A file where each line is a list of sets of symbols (using Python syntax).
+        Each set represents a time point.
 
         :param fn: Filename or Path object
         :param window: See EventWarping
@@ -116,9 +119,10 @@ class EventSeries:
     def from_setlistfiles(cls, fns, window, intonly=False, selected=None,
                           constraints=None, max_series_length=None):
         """Read a list of setlist file and create an eventwarping object.
-        A file where each line is a list of sets of symbols. Each set represents a time point.
+        A file where each line is a list of sets of symbols (using Python syntax).
+        Each set represents a time point.
 
-        :param fn: Filename or Path object
+        :param fns: List of filenames or Path objects
         :param window: See EventWarping
         :param intonly: See EventWarping
         :param selected: Boolean list. Only use the i-th series if selected[i] is True
@@ -142,7 +146,7 @@ class EventSeries:
 
     @classmethod
     def from_setlist(cls, sl, window, intonly=False, constraints=None, max_series_length=None):
-        """Convert a setlist to an eventwarping object.
+        """Convert a setlist (a Python list of sets of symbols) to an eventwarping object.
 
         :param sl: List of sets of symbols
         :param window: See EventWarping
@@ -184,6 +188,7 @@ class EventSeries:
 
     @classmethod
     def from_filepointer(cls, fp, window, intonly=False, constraints=None, max_series_length=None):
+        """See from_file."""
         es = EventSeries(window, intonly=intonly, constraints=constraints)
         allseries = list()
         for line in fp.readlines():
@@ -221,7 +226,7 @@ class EventSeries:
 
     @classmethod
     def from_file(cls, fn, window, intonly=False, constraints=None, max_series_length=None):
-        """Convert a simple formatted file to an eventwarping object.
+        """Convert a simple formatted file to an EventWarping object.
 
         The format is:
         - A line is a series
@@ -255,15 +260,15 @@ class EventSeries:
     def insert_spacers(self, nb_spacers):
         """Introduce empty events in between events.
 
-        This can be used when allow_merge is set to 1, thus no merging allowed. By moving the
-        empty slots, warping is still possible.
+        This can be used when using the MaxMergeEventConstraint(1), thus when no merging is allowed.
+        By moving the empty slots, warping is still possible following a principle of 'bubble warping'.
 
         For example:
 
             | A | B | A | A |
             | A | A | B | A |
 
-        Will be aligned to (with allow_merge set to 1):
+        Will be aligned to (when no merging is allowed):
 
             |   | A | B | A | A |   |   |   |
             | A | A | B | A |   |   |   |   |
@@ -366,6 +371,7 @@ class EventSeries:
 
         Requires:
         - windowed_counts
+        - factors
 
         """
         if self._versions[V_RC] == self._versions[V_WC]:
@@ -591,7 +597,16 @@ class EventSeries:
         return True
 
     def compute_warped_series(self):
-        """Warp events by maximally one step (left, right, or none)."""
+        """Warp events by maximally one step (left, right, or none).
+
+        Computes the following properties:
+        - warped_series
+
+        Requires:
+        - warping_directions
+        - warping_inertia
+
+        """
         # If warping_directions has not yet been recomputed, do so
         if self._versions[V_WD] == self._versions[V_WS]:
             self.compute_warping_directions()
@@ -763,6 +778,13 @@ class EventSeries:
         return s
 
     def plot_directions(self, symbol=0, seriesidx=None, filename=None):
+        """Plot the currently computed properties used to guide the warping.
+
+        :param symbol: Add plots for the given symbol or list of symbols
+        :param seriesidx: Add plots for the given series index or list of series indices.
+        :param filename: Plot directly to a file (if not given, returns fig, axs)
+        :return: fig, axs (if filename is not given)
+        """
         import matplotlib as mpl
         import matplotlib.pyplot as plt
         if type(symbol) is int:
@@ -849,6 +871,11 @@ class EventSeries:
         return fig, axs
 
     def plot_symbols(self, filename=None):
+        """Plot the counts of all symbols over all events (aggregated over the series).
+
+        :param filename: Plot directly to a file
+        :returns: fig, axs if filename is not given
+        """
         import matplotlib as mpl
         import matplotlib.pyplot as plt
         fig, axs = plt.subplots(nrows=1, ncols=2, figsize=(10, 8))
