@@ -6,7 +6,7 @@ from pathlib import Path
 import os
 
 from eventwarping.eventseries import EventSeries
-from eventwarping.constraints import MaxMergeEventConstraint, MaxMergeEventIfSameConstraint
+from eventwarping.constraints import *
 
 
 # If environment variable TESTDIR is set, save figures to this
@@ -15,30 +15,24 @@ directory = Path(os.environ.get('TESTDIR', Path(__file__).parent))
 
 
 def test_example1():
-    print("")
     fn = Path(__file__).parent / "rsrc" / "example1.txt"
     es = EventSeries.from_file(fn, window=3)
-    # es.print_series()
-    # print(es.series.shape)
-
-    print("Series:")
-    print(es.format_series())
+    # print("Series:\n{es.format_series()}")
 
     es.compute_windowed_counts()
-    print(f"Windowed counts:\n{es.windowed_counts}")
+    # print(f"Windowed counts:\n{es.windowed_counts}")
     # wc_sol = np.array([[4.5, 3.0, 1., 2.0, 3.0, 2., 1., 1.5],
     #                    [2.0, 2.5, 4., 2.5, 0.5, 0., 0., 0.0]])
     # np.testing.assert_array_almost_equal(es.windowed_counts, wc_sol)
 
     es.compute_warping_directions()
-    print(f"Warping directions:\n{es.warping_directions}")
+    # print(f"Warping directions:\n{es.warping_directions}")
     # wd_sol = np.array([[-1.8, -2.1, -0.6,  1.2,  0.0, -1.2, -0.3,  0.6],
     #                    [ 0.6,  1.2,  0.0, -2.1, -1.5, -0.3,  0.0,  0.0]])
     # np.testing.assert_array_almost_equal(es.warping_directions, wd_sol)
 
     es.compute_warped_series()
-    print(f"Warped series:")
-    print(es.format_warped_series())
+    # print(f"Warped series:\n{es.format_warped_series()}")
     ws_sol = (" A   |     |   B |     | A   |     |     |     |\n"
               " A B |     |     |     | A   |     |     |     |\n"
               " A   |     |   B |     | A   |     |     |     |\n"
@@ -48,49 +42,53 @@ def test_example1():
 
 
 def test_example2():
-    print("")
     fn = Path(__file__).parent / "rsrc" / "example1.txt"
     es = EventSeries.from_file(fn, window=3)
 
     for i, ws in enumerate(es.warp_yield(iterations=3)):
-        print(f"=== {i+1:>2} ===")
-        print(es.format_warped_series())
+        # print(f"=== {i+1:>2} ===")
+        # print(es.format_warped_series())
+        pass
+
+    ws_sol = (" A   |     |   B |     | A   |     |     |    \n"
+              "     |     | A B |     | A   |     |     |    \n"
+              " A   |     |   B |     | A   |     |     |    \n"
+              " A   |     |   B |     | A   |     |     |    \n"
+              " A   |     |   B |     |     |     |     | A  \n")
+    np.equal(es.format_warped_series(), ws_sol)
 
 
 def test_example3():
-    print("")
     fn = Path(__file__).parent / "rsrc" / "example3.txt"
     es = EventSeries.from_file(fn, window=3)
 
-    print("=== 1 ===")
-    es.compute_windowed_counts()
-    es.compute_warping_directions()
-    print(es.format_warped_series())
-    fig, axs = es.plot_directions(symbol=0)
-    fig.savefig(directory / "gradients.png")
-    es.compute_warped_series()
+    # print(f'Original\n{es.format_series()}')
+    for i in range(2):
+        # print(f"=== {i} ===")
+        # plot = {'filename': str(directory / f'gradients_{i}.png'), 'symbol': [0], 'seriesidx': []}
+        plot = None
+        es.warp(plot=plot)
+        # print(es.format_warped_series())
+    # print(f'Result:\n{es.format_warped_series()}')
 
-    print("=== 2 ===")
-    es.warp()
-    print(es.format_warped_series())
+    ws_sol = (" A |   |   |   | A |   |   |  \n"
+              " A |   |   |   | A |   |   |  \n"
+              " A |   |   |   | A |   |   |  \n"
+              " A |   |   |   | A |   |   |  \n"
+              " A |   |   |   |   |   |   | A\n")
+    np.equal(es.format_warped_series(), ws_sol)
 
 
 def test_example4():
-    print("")
     fn = Path(__file__).parent / "rsrc" / "example4.txt"
     es = EventSeries.from_file(fn, window=3)
 
-    print("=== 0 ===")
-    es.compute_windowed_counts()
-    es.compute_warping_directions()
-    print(es.format_warped_series())
-    fig, axs = es.plot_directions(symbol={0, 1, 2, 3})
-    fig.savefig(directory / "gradients.png")
-    plt.close(fig)
-    es.compute_warped_series()
-
-    print("=== 1 ===")
-    print(es.format_warped_series())
+    for i in range(2):
+        # print(f"=== {i} ===")
+        # plot = {'filename': str(directory / f'gradients_{i}.png'), 'symbol': [0, 1, 2, 3], 'seriesidx': []}
+        plot = None
+        es.warp(plot=plot)
+    # print(f'Result:\n{es.format_warped_series()}')
 
     ws_sol = (" A B     |         |         |     C D |\n"
               " A B     |         |         |     C D |")
@@ -98,71 +96,65 @@ def test_example4():
 
 
 def test_example5():
-    print("")
     fn = Path(__file__).parent / "rsrc" / "example5.txt"
     es = EventSeries.from_file(fn, window=3)
 
-    print("=== 0 ===")
-    es.compute_windowed_counts()
-    es.compute_warping_directions()
-    print(es.format_warped_series())
-    fig, axs = es.plot_directions(symbol={0, 1, 2, 3})
-    fig.savefig(directory / "gradients.png")
-    plt.close(fig)
+    for i in range(3):
+        # print(f"=== {i} ===")
+        # plot = {'filename': str(directory / f'gradients_{i}.png'), 'symbol': [0, 1, 2, 3], 'seriesidx': []}
+        plot = None
+        es.warp(plot=plot)
+    # print(f'Result:\n{es.format_warped_series()}')
 
-    print("=== 1 ===")
-    es.compute_warped_series()
-    print(es.format_warped_series())
-
-    print("=== 2 ===")
-    es.compute_warped_series()
-    print(es.format_warped_series())
+    ws_sol = (" A C B   |         |         |   C   D\n",
+              " A   B   |         |         |   C   D")
+    np.equal(es.format_warped_series(), ws_sol)
 
 
 def test_example6():
-    print("")
     fn = Path(__file__).parent / "rsrc" / "example6.txt"
-
     es = EventSeries.from_file(fn, window=3, constraints=[MaxMergeEventConstraint(2)])
-    print('Original')
-    print(es.format_warped_series())
+    # print(f'Original:\n{es.format_series()}')
 
     for i in range(10):
         es.warp()
-    print('With constraints')
-    print(es.format_warped_series())
+    # print(f'With constraints:\n{es.format_warped_series()}')
+    ws_sol = ("   |   |   | A |   |   |   |  \n"
+              " A |   | A | A | A | A |   | A")
+    np.equal(es.format_warped_series(), ws_sol)
 
     es = EventSeries.from_file(fn, window=3)
     for i in range(10):
         es.warp()
-    print('Without constraints')
-    print(es.format_warped_series())
+    # print(f'Without constraints:\n{es.format_warped_series()}')
+    ws_sol = ("   |   |   | A |   |   |   |  "
+              " A |   |   | A |   |   |   | A")
+    np.equal(es.format_warped_series(), ws_sol)
 
 
 def test_example7():
     """To check:
 
     - Are the Bs aligned
-
-    This is suboptimal
-        |     | B   |     |   A |   A |     |
-        |   A | B   |     |     |   A |   A |
+    - For the As to be aligned at the end, see test_example7b
 
     """
-    print("")
     fn = Path(__file__).parent / "rsrc" / "example7.txt"
     es = EventSeries.from_file(fn, window=5, constraints=[MaxMergeEventConstraint(1)])
-    print('Original')
-    print(es.format_warped_series())
+    # print('Original:\n{es.format_warped_series()}')
 
     for i in range(3):
-        print(f"=== {i} ===")
-        es.warp(plot={'filename': str(directory / f'gradients_{i}.png'),
-                      'symbol': {0, 1},
-                      'seriesidx': 0})
-        print(es.format_warped_series())
-    print('Result')
-    print(es.format_warped_series())
+        # print(f"=== {i} ===")
+        # plot = {'filename': str(directory / f'gradients_{i}.png'), 'symbol': {0, 1}, 'seriesidx': 0}
+        plot = None
+        es.warp(plot=plot)
+        # print(es.format_warped_series())
+    # print(f'Result:\n{es.format_warped_series()}')
+
+    ws_sol = ("     |     | B   |     |   A |   A |     |    "
+              "     |   A | B   |     |     |   A |   A |    "
+              "     |   A | B   |     |     |   A |     |   ")
+    np.equal(es.format_warped_series(), ws_sol)
 
 
 def test_example7b():
@@ -174,40 +166,68 @@ def test_example7b():
     This could be suboptimal
         |     | B   |     |   A |   A |     |
         |   A | B   |     |     |   A |   A |
-    Thus prefer:
+    Thus prefer (by using different constraint):
         |     | B   |     |     |   A |     |
         |   A | B   |     |     |   A |     |
 
     """
-    print("")
     fn = Path(__file__).parent / "rsrc" / "example7.txt"
     es = EventSeries.from_file(fn, window=5, constraints=[MaxMergeEventIfSameConstraint(2)])
-    print('Original')
-    print(es.format_warped_series())
+    # print(f'Original:\n{es.format_series()}')
 
     for i in range(3):
-        print(f"=== {i} ===")
+        # print(f"=== {i} ===")
         es.warp()
-        print(es.format_warped_series())
-    print('Result')
-    print(es.format_warped_series())
+        # print(es.format_warped_series())
+    # print(f'Result:\n{es.format_warped_series()}')
+
+    ws_sol = ("     |     | B   |     |     |   A |     |    "
+              "     |   A | B   |     |     |   A |     |    "
+              "     |   A | B   |     |     |   A |     |    ")
+    np.equal(es.format_warped_series(), ws_sol)
 
 
 def test_example8():
-    print("")
     fn = Path(__file__).parent / "rsrc" / "example8.txt"
-
     es = EventSeries.from_file(fn, window=5, constraints=[MaxMergeEventConstraint(1)])
-    print(f'Original\n{es.format_warped_series()}')
+    # print(f'Original\n{es.format_series()}')
     es.insert_spacers(1)
-    print(f'Spaced\n{es.format_warped_series()}')
+    # print(f'Spaced\n{es.format_series()}')
 
     for i in range(5):
-        print(f"=== {i} ===")
-        es.warp(plot={'filename': str(directory / f'gradients_{i}.png'),
-                      'symbol': {0, 1},
-                      'seriesidx': 1})
-        print(es.format_warped_series())
-    print('Result')
-    print(es.format_warped_series())
+        # print(f"=== {i} ===")
+        # plot = {'filename': str(directory / f'gradients_{i}.png'), 'symbol': {0, 1}, 'seriesidx': 1}
+        plot = None
+        es.warp(plot=plot)
+        # print(es.format_warped_series())
+    # print(f'Result:\n{es.format_warped_series()}')
+
+    ws_sol = ("     |     |     |     | A   |   B |     | A   | A   | A   | A   | A   |    "
+              "     | A   | A   | A   | A   |   B |     |     |     |     | A   | A   |    ")
+    np.equal(es.format_warped_series(), ws_sol)
+
+
+def test_example9():
+    data = (
+        "| A | A   C | B |   |\n"
+        "| A |   B   | C | C |\n"
+    )
+    constraints = [
+        MaxMergeEventConstraint(2),
+        NoXorMergeSymbolSetConstraint(["A", "B"])
+    ]
+    es = EventSeries.from_string(data, window=5, constraints=constraints)
+    # print(f'Original\n{es.format_series()}')
+
+    for i in range(5):
+        # print(f"=== {i} ===")
+        # plot = {'filename': str(directory / f'gradients_{i}.png'), 'symbol': [0, 1, 2], 'seriesidx': [0, 1]}
+        plot = None
+        es.warp(plot=plot)
+        # print(es.format_warped_series())
+    # print(f'Result:\n{es.format_warped_series()}')
+
+    ws_sol = ("       | A C   |     B |       |       |      "
+              "       | A     |     B |   C   |       |      ")
+    np.equal(es.format_warped_series(), ws_sol)
 
