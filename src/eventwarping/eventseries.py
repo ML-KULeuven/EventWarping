@@ -476,6 +476,7 @@ class EventSeries:
         # We avoid contractions (this is when the gradients are pos and then neg)
         conti = np.where(np.diff(np.sign(self._warping_directions)) == -2)
         for idx, (r, c) in enumerate(zip(*conti)):
+            # Select the index where smoothed counts is a peak
             if self._smoothed_counts[r, c] < self._smoothed_counts[r, c + 1]:
                 conti[1][idx] += 1
         self._warping_directions[conti] = 0
@@ -561,7 +562,7 @@ class EventSeries:
         #     if prev_c == 0:
         #         prev_c, cost = 1, cc[r, 1]
         #         if cc[r, 0] < cost:
-      .  #             prev_c, cost = 0, cc[r, 0]
+        #             prev_c, cost = 0, cc[r, 0]
         #     elif prev_c == 1:
         #         prev_c, cost = 1, cc[r, 1]
         #         if cc[r, 0] < cost:
