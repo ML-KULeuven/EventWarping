@@ -481,7 +481,7 @@ class EventSeries:
         # We avoid contractions (this is when the gradients are pos and then neg)
         conti = np.where(np.diff(np.sign(self._warping_directions)) == -2)
         for idx, (r, c) in enumerate(zip(*conti)):
-            if abs(self._warping_directions[r, c]) > abs(self._warping_directions[r, c + 1]):
+            if self._smoothed_counts[r, c] < self._smoothed_counts[r, c + 1]:
                 conti[1][idx] += 1
         self._warping_directions[conti] = 0
         # All zero crossings from pos to neg have inertia, we don't want to move them as they are already a peak
