@@ -628,15 +628,13 @@ class EventSeries:
         scs = np.zeros((self.nb_events, 3, self.nb_symbols), dtype=int)  # summed counts symbols
         sce = np.zeros((self.nb_events, 3), dtype=int)  # summed counts events
 
+        # Aggregated directions and inertia
+        wss_all = np.einsum('kji,ij->kj', self.warped_series, self.warping_directions)
+        wsi_all = np.einsum('kji,ij->kj', self.warped_series, self._warping_inertia)
+
         for sei in range(self.nb_series):
-            # Aggregated direction
-            wss = self.warped_series[sei, :, :]
-            wss = np.multiply(wss.T, self._warping_directions)
-            wss = wss.sum(axis=0)
-            # Aggregated inertia
-            wsi = self.warped_series[sei, :, :]
-            wsi = np.multiply(wsi.T, self._warping_inertia)
-            wsi = wsi.sum(axis=0)
+            wss = wss_all[sei]
+            wsi = wsi_all[sei]
 
             # Initialize datastructures
             cc[:, :] = 0
@@ -664,15 +662,17 @@ class EventSeries:
                 cc[i, 0] = np.inf
                 ps[i, 1] = -1
                 for prevs in [1, 0]:
+                    if not cc[i - 1, prevs] < cc[i, 0]:
+                        continue
                     if prevs == 1:
                         merged_cnts_s = scs[i-1, prevs] + self._warped_series[sei, i, :]
                         merged_cnts_e = sce[i-1, prevs] + self._warped_series_ec[sei, i]
                         args = scs[i-1, prevs], self._warped_series[sei, i, :]
                     else:
                         merged_cnts_s = self._warped_series[sei, i, :]
-                        merged_cnts_e = np.max(self._warped_series[sei, i, :])
+                        merged_cnts_e = self._warped_series_ec[sei, i]
                         args = None, self._warped_series[sei, i, :]
-                    if cc[i - 1, prevs] < cc[i, 0] and self._allow_merge(merged_cnts_s, merged_cnts_e, *args):
+                    if self._allow_merge(merged_cnts_s, merged_cnts_e, *args):
                         cc[i, 0] = cc[i - 1, prevs]
                         ps[i, 0] = prevs
                         scs[i, 0] = merged_cnts_s
@@ -687,15 +687,17 @@ class EventSeries:
                 cc[i, 1] = np.inf
                 ps[i, 1] = -1
                 for prevs in [1, 0, 2]:
+                    if not cc[i - 1, prevs] < cc[i, 1]:
+                        continue
                     if prevs == 2:
                         merged_cnts_s = scs[i - 1, prevs] + self._warped_series[sei, i, :]
                         merged_cnts_e = sce[i - 1, prevs] + self._warped_series_ec[sei, i]
                         args = scs[i - 1, prevs], self._warped_series[sei, i, :]
                     else:
                         merged_cnts_s = self._warped_series[sei, i, :]
-                        merged_cnts_e = np.max(self._warped_series[sei, i, :])
+                        merged_cnts_e = self._warped_series_ec[sei, i]
                         args = None, self._warped_series[sei, i, :]
-                    if cc[i - 1, prevs] < cc[i, 1] and self._allow_merge(merged_cnts_s, merged_cnts_e, *args):
+                    if self._allow_merge(merged_cnts_s, merged_cnts_e, *args):
                         cc[i, 1] = cc[i - 1, prevs]
                         ps[i, 1] = prevs
                         scs[i, 1] = merged_cnts_s

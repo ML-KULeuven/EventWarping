@@ -231,3 +231,27 @@ def test_example9():
               "       | A     |     B |   C   |       |      ")
     np.equal(es.format_warped_series(), ws_sol)
 
+
+def test_example10():
+    data = (
+        "| A | A B | B C | C |\n"
+        "| A |     |     | C |\n"
+    )
+
+    def distance(a, b):
+        if ('B' in a and 'C' in b) or ('B' in b and 'C' in a):
+            return 5
+        return 1
+
+    constraints = [
+        NoMergeTooDistantSymbolSetConstraint(distance, 2)
+    ]
+    es = EventSeries.from_string(data, window=5, constraints=constraints)
+
+    for i in range(5):
+        es.warp()
+
+    ws_sol = ("       | A B   |       |   B C |     C |      "
+              "       | A     |       |       |     C |      ")
+    np.equal(es.format_warped_series(), ws_sol)
+
