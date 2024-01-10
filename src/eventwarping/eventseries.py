@@ -257,6 +257,18 @@ class EventSeries:
         es = cls.from_filepointer(fp, window, intonly, constraints, max_series_length)
         return es
 
+    def copy(self, filter_symbols=None):
+        es = EventSeries(window=self.window, intonly=self.intonly, constraints=self.constraints)
+        if filter is None:
+            es.series = self.series.copy()
+        else:
+            ridx, _, _ = np.where(self.series[:, :, filter_symbols])
+            ridx = np.unique(ridx)
+            es.series = self.series[ridx].copy()
+        es.nb_series, es.nb_events, es.nb_symbols = es.series.shape
+        es.series_changed()
+        return es
+
     def insert_spacers(self, nb_spacers):
         """Introduce empty events in between events.
 
@@ -289,22 +301,32 @@ class EventSeries:
         self.window = ((self.window // 2) + nb_spacers)*2 + 1
         self.reset()
 
-    def get_counts(self, ignore_merged=False):
+    def get_counts(self, ignore_merged=False, filter_symbols=None):
         if self._warped_series is None:
             self._warped_series = self.series
-        if ignore_merged:
-            cnts = np.sign(self._warped_series).sum(axis=0).T
+        if filter_symbols is None:
+            ws = self._warped_series
         else:
-            cnts = self._warped_series.sum(axis=0).T
+            idxs, _, _ = np.where(self._warped_series[:, :, filter_symbols] > 0)
+            ws = self._warped_series[idxs]
+        if ignore_merged:
+            cnts = np.sign(ws).sum(axis=0).T
+        else:
+            cnts = ws.sum(axis=0).T
         return cnts
 
-    def get_smoothed_counts(self, window=3, ignore_merged=False):
+    def get_smoothed_counts(self, window=3, ignore_merged=False, filter_symbols=None):
         if self._warped_series is None:
             self._warped_series = self.series
-        if ignore_merged:
-            counts = np.sign(self._warped_series)
+        if filter_symbols is None:
+            ws = self._warped_series
         else:
-            counts = self._warped_series
+            idxs, _, _ = np.where(self._warped_series[:, :, filter_symbols] > 0)
+            ws = self._warped_series[idxs]
+        if ignore_merged:
+            counts = np.sign(ws)
+        else:
+            counts = ws
         kernel = signal.windows.hann(window)  # make sure to be uneven to be centered
         counts = counts.sum(axis=0).T
         for si in range(counts.shape[0]):
@@ -332,7 +354,9 @@ class EventSeries:
         # Weigh based on number of occurrences per series (and symbol). Symbols
         # that occur in almost every timestep, should not impact the warping too much.
         max_entropy = np.log2(1 / self.nb_events)
-        self._factors = 1 - np.log2(np.divide(1, np.sum(ws, axis=1))) / max_entropy
+        ws_sum = np.sum(ws, axis=1)
+        ws_sum[ws_sum == 0] = 1
+        self._factors = 1 - np.log2(np.divide(1, ws_sum)) / max_entropy
         self._factors[np.isinf(self._factors)] = 1
         ws = ws * self._factors[:, np.newaxis, :]
 
@@ -872,7 +896,7 @@ class EventSeries:
             return None
         return fig, axs
 
-    def plot_symbols(self, filename=None):
+    def plot_symbols(self, filename=None, filter_symbols=None):
         """Plot the counts of all symbols over all events (aggregated over the series).
 
         :param filename: Plot directly to a file
@@ -883,13 +907,13 @@ class EventSeries:
         fig, axs = plt.subplots(nrows=1, ncols=2, figsize=(10, 8))
 
         ax = axs[0]
-        im = self.get_counts(ignore_merged=True)
+        im = self.get_counts(ignore_merged=True, filter_symbols=filter_symbols)
         ax.imshow(im)
         ax.set_xlabel('Events')
         ax.set_ylabel('Symbol')
 
         ax = axs[1]
-        im = self.get_smoothed_counts(window=5, ignore_merged=True)
+        im = self.get_smoothed_counts(window=5, ignore_merged=True, filter_symbols=filter_symbols)
         thr = np.quantile(im, 0.9)
         im[im < thr] = 0
         ax.imshow(im)
