@@ -637,8 +637,32 @@ class EventSeries:
         if self._warped_series_ec is None:
             self._warped_series_ec = self._warped_series.max(axis=2)
 
-        ws = np.zeros((self.nb_series, self.nb_events, self.nb_symbols), dtype=int)
-        wsec = np.zeros((self.nb_series, self.nb_events), dtype=int)
+        assert self._warped_series.shape[0] == self.nb_series
+        ws, wsec = self.align_series(self._warped_series, self._warped_series_ec)
+
+        self._warped_series = ws
+        self._warped_series_ec = wsec
+        self._versions[V_WS] += 1
+        return self._warped_series
+
+    def align_series(self, series, series_ec=None):
+        """Align events in the given series based on the previously computed gradients.
+
+        This method can be used to align new data to the originally given data. Assuming
+        that warping has been applied to that originally given data.
+
+        :param series: Series is an array with dimensions (series, event, symbol)
+        :param series: For every event, of how many merges this event is constructed.
+            Dimensions are (series, nb of events)
+        """
+        if series_ec is None:
+            series_ec = series.max(axis=2)
+        assert series.shape[1] == self.nb_events
+        assert series.shape[2] == self.nb_symbols
+        nb_series = series.shape[0]
+
+        ws = np.zeros((nb_series, self.nb_events, self.nb_symbols), dtype=int)
+        wsec = np.zeros((nb_series, self.nb_events), dtype=int)
 
         # compute constraints
         # if self.constraints is not None:
@@ -653,10 +677,10 @@ class EventSeries:
         sce = np.zeros((self.nb_events, 3), dtype=int)  # summed counts events
 
         # Aggregated directions and inertia
-        wss_all = np.einsum('kji,ij->kj', self.warped_series, self.warping_directions)
-        wsi_all = np.einsum('kji,ij->kj', self.warped_series, self._warping_inertia)
+        wss_all = np.einsum('kji,ij->kj', series, self.warping_directions)
+        wsi_all = np.einsum('kji,ij->kj', series, self._warping_inertia)
 
-        for sei in range(self.nb_series):
+        for sei in range(nb_series):
             wss = wss_all[sei]
             wsi = wsi_all[sei]
 
@@ -672,10 +696,10 @@ class EventSeries:
             cc[0, 2] = -wss[0]
             ps[0, :] = [0, 1, 2]
             scs[0, 0, :] = 0
-            scs[0, 1, :] = self._warped_series[sei, 0, :]
+            scs[0, 1, :] = series[sei, 0, :]
             scs[0, 2, :] = scs[0, 1, :]
             sce[0, 0] = 0
-            sce[0, 1] = self._warped_series_ec[sei, 0]
+            sce[0, 1] = series_ec[sei, 0]
             sce[0, 2] = sce[0, 1]
             for i in range(1, len(wss)):
                 # Backward
@@ -689,13 +713,13 @@ class EventSeries:
                     if not cc[i - 1, prevs] < cc[i, 0]:
                         continue
                     if prevs == 1:
-                        merged_cnts_s = scs[i-1, prevs] + self._warped_series[sei, i, :]
-                        merged_cnts_e = sce[i-1, prevs] + self._warped_series_ec[sei, i]
-                        args = scs[i-1, prevs], self._warped_series[sei, i, :]
+                        merged_cnts_s = scs[i-1, prevs] + series[sei, i, :]
+                        merged_cnts_e = sce[i-1, prevs] + series_ec[sei, i]
+                        args = scs[i-1, prevs], series[sei, i, :]
                     else:
-                        merged_cnts_s = self._warped_series[sei, i, :]
-                        merged_cnts_e = self._warped_series_ec[sei, i]
-                        args = None, self._warped_series[sei, i, :]
+                        merged_cnts_s = series[sei, i, :]
+                        merged_cnts_e = series_ec[sei, i]
+                        args = None, series[sei, i, :]
                     if self._allow_merge(merged_cnts_s, merged_cnts_e, *args):
                         cc[i, 0] = cc[i - 1, prevs]
                         ps[i, 0] = prevs
@@ -714,13 +738,13 @@ class EventSeries:
                     if not cc[i - 1, prevs] < cc[i, 1]:
                         continue
                     if prevs == 2:
-                        merged_cnts_s = scs[i - 1, prevs] + self._warped_series[sei, i, :]
-                        merged_cnts_e = sce[i - 1, prevs] + self._warped_series_ec[sei, i]
+                        merged_cnts_s = scs[i - 1, prevs] + series[sei, i, :]
+                        merged_cnts_e = sce[i - 1, prevs] + series_ec[sei, i]
                         args = scs[i - 1, prevs], self._warped_series[sei, i, :]
                     else:
-                        merged_cnts_s = self._warped_series[sei, i, :]
-                        merged_cnts_e = self._warped_series_ec[sei, i]
-                        args = None, self._warped_series[sei, i, :]
+                        merged_cnts_s = series[sei, i, :]
+                        merged_cnts_e = series_ec[sei, i]
+                        args = None, series[sei, i, :]
                     if self._allow_merge(merged_cnts_s, merged_cnts_e, *args):
                         cc[i, 1] = cc[i - 1, prevs]
                         ps[i, 1] = prevs
@@ -739,8 +763,8 @@ class EventSeries:
                     if cc[i - 1, prevs] < cc[i, 2]:
                         cc[i, 2] = cc[i - 1, prevs]
                         ps[i, 2] = prevs
-                        scs[i, 2] = self._warped_series[sei, i, :]
-                        sce[i, 2] = self._warped_series_ec[sei, i]
+                        scs[i, 2] = series[sei, i, :]
+                        sce[i, 2] = series_ec[sei, i]
                 cc[i, 2] += -wss[i]
             cc[len(wss) - 1, 2] = np.inf  # Last element cannot move forward
             path = self._best_warped_path(cc, ps)
@@ -750,13 +774,22 @@ class EventSeries:
 
             # Do realignment
             for i_from, i_to in path:
-                ws[sei, i_to, :] = ws[sei, i_to, :] + self._warped_series[sei, i_from, :]
-                wsec[sei, i_to] = wsec[sei, i_to] + self._warped_series_ec[sei, i_from]
+                ws[sei, i_to, :] = ws[sei, i_to, :] + series[sei, i_from, :]
+                wsec[sei, i_to] = wsec[sei, i_to] + series_ec[sei, i_from]
 
-        self._warped_series = ws
-        self._warped_series_ec = wsec
-        self._versions[V_WS] += 1
-        return self._warped_series
+        return ws, wsec
+
+    def align_series_times(self, series, series_ec=None, k=1):
+        """Align events in the given series based on the previously computed gradients.
+
+        This method can be used to align new data to the originally given data. Assuming
+        that warping has been applied to that originally given data.
+
+        See align_series for more informatin.
+        """
+        for _ in range(k):
+            series, series_ec = self.align_series(series, series_ec)
+        return series, series_ec
 
     @property
     def warped_series(self):
