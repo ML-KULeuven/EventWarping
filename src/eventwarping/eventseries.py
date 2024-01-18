@@ -94,8 +94,12 @@ class EventSeries:
             self.compute_warped_series()
             yield self.warped_series
 
+    def warp_with(self, es: 'EventSeries', iterations=1):
+        self._warped_series, _ = es.align_series_times(self.warped_series, iterations=iterations)
+
     @classmethod
-    def from_setlistfile(cls, fn, window, intonly=False, constraints=None, max_series_length=None):
+    def from_setlistfile(cls, fn, window, intonly=False, constraints=None, max_series_length=None,
+                         using: 'EventSeries'=None):
         """Read a setlist file and create an eventwarping object.
         A file where each line is a list of sets of symbols (using Python syntax).
         Each set represents a time point.
@@ -104,6 +108,7 @@ class EventSeries:
         :param window: See EventWarping
         :param intonly: See EventWarping
         :param constraints: See EventWarping
+        :param using:
         :return: EventWarping object
         """
         import ast
@@ -113,11 +118,11 @@ class EventSeries:
         with fn.open("r") as fp:
             for line in fp.readlines():
                 data.append(ast.literal_eval(line))
-        return cls.from_setlist(data, window, intonly, constraints, max_series_length)
+        return cls.from_setlist(data, window, intonly, constraints, max_series_length, using=using)
 
     @classmethod
     def from_setlistfiles(cls, fns, window, intonly=False, selected=None,
-                          constraints=None, max_series_length=None):
+                          constraints=None, max_series_length=None, using: 'EventSeries'=None):
         """Read a list of setlist file and create an eventwarping object.
         A file where each line is a list of sets of symbols (using Python syntax).
         Each set represents a time point.
@@ -128,6 +133,7 @@ class EventSeries:
         :param selected: Boolean list. Only use the i-th series if selected[i] is True
         :param constraints: See EventWarping
         :param max_series_length: See from_setlist
+        :param using:
         :return: EventWarping object
         """
         import ast
@@ -142,39 +148,58 @@ class EventSeries:
                         data_line = ast.literal_eval(line)
                         data.append(data_line)
                     i += 1
-        return cls.from_setlist(data, window, intonly, constraints, max_series_length)
+        return cls.from_setlist(data, window, intonly, constraints, max_series_length, using=using)
 
     @classmethod
-    def from_setlist(cls, sl, window, intonly=False, constraints=None, max_series_length=None):
-        """Convert a setlist (a Python list of sets of symbols) to an eventwarping object.
+    def from_setlist(cls, sl, window=None, intonly=False, constraints=None, max_series_length=None,
+                     using: 'EventSeries'=None):
+        """Convert a setlist (a Python list of lists of sets of symbols) to an eventwarping object.
 
-        :param sl: List of sets of symbols
+        :param sl: List of lists of sets of symbols
         :param window: See EventWarping
         :param intonly: See EventWarping
         :param constraints: See EventWarping
         :param max_series_length: Length of each series (i.e. #itemsets) is truncated to this size
+        :param using: Parse based on given EventSeries object
         :return: EventWarping object
         """
+        if window is None:
+            if using is None:
+                raise ValueError(f"window argument cannot be None if using is None")
+            window = using.window
         es = EventSeries(window=window, intonly=intonly, constraints=constraints)
-        es.nb_symbols = 0
-        es.nb_events = 0
+        es.nb_symbols = 0 if using is None else using.nb_symbols
+        es.nb_events = 0 if using is None else using.nb_events
         es.nb_series = len(sl)
+        if using is not None:
+            es.symbol2int = using.symbol2int
+            es.int2symbol = using.int2symbol
         for series in sl:
             if len(series) > es.nb_events:
-                es.nb_events = len(series)
+                if using is None:
+                    es.nb_events = len(series)
+                else:
+                    raise ValueError(f"setlist is not compatible with using EventSeries: nb_events >= {es.nb_events}")
             for event in series:
                 for symbol in event:
                     if intonly:
                         if type(symbol) is not int:
                             raise ValueError(f"Symbol is not an int: {symbol}")
                         if symbol >= es.nb_symbols:
-                            es.nb_symbols = symbol + 1
+                            if using is None:
+                                es.nb_symbols = symbol + 1
+                            else:
+                                raise ValueError(
+                                    f"setlist is not compatible with using EventSeries: nb_symbols >= {es.nb_symbols}")
                     else:
                         if symbol not in es.symbol2int:
+                            if using is not None:
+                                raise ValueError(
+                                    f"setlist is not compatible with using EventSeries: unknown symbol {symbol}")
                             es.symbol2int[symbol] = es.nb_symbols
                             es.int2symbol[es.nb_symbols] = symbol
                             es.nb_symbols += 1
-        if max_series_length:
+        if max_series_length and using is None:
             es.nb_events = min(es.nb_events, max_series_length)
         es.series = np.zeros((es.nb_series, es.nb_events, es.nb_symbols), dtype=int)
         for sei, series in enumerate(sl):
@@ -187,9 +212,13 @@ class EventSeries:
         return es
 
     @classmethod
-    def from_filepointer(cls, fp, window, intonly=False, constraints=None, max_series_length=None):
+    def from_filepointer(cls, fp, window, intonly=False, constraints=None, max_series_length=None,
+                         using: 'EventSeries'=None):
         """See from_file."""
         es = EventSeries(window, intonly=intonly, constraints=constraints)
+        if using is not None:
+            es.int2symbol = using.int2symbol
+            es.symbol2int = using.symbol2int
         allseries = list()
         for line in fp.readlines():
             series = []
@@ -198,22 +227,32 @@ class EventSeries:
                 events = events.strip()
                 if events != "":
                     events = [e.strip() for e in events.strip().split(" ") if e.strip() != ""]
-                    for event in events:
+                    for symbol in events:
                         if intonly:
-                            if type(event) is not int:
-                                raise ValueError(f"Symbol is not int: {event}")
-                            if event >= es.nb_symbols:
-                                es.nb_symbols = event + 1
+                            if type(symbol) is not int:
+                                raise ValueError(f"Symbol is not int: {symbol}")
+                            if symbol >= es.nb_symbols:
+                                if using is None:
+                                    es.nb_symbols = symbol + 1
+                                else:
+                                    raise ValueError(
+                                        f"setlist is not compatible with using EventSeries: nb_events >= {es.nb_events}")
                         else:
-                            if event not in es.symbol2int:
-                                es.symbol2int[event] = es.nb_symbols
-                                es.int2symbol[es.nb_symbols] = event
+                            if symbol not in es.symbol2int:
+                                if using is not None:
+                                    raise ValueError(
+                                        f"setlist is not compatible with using EventSeries: unknown symbol {symbol}")
+                                es.symbol2int[symbol] = es.nb_symbols
+                                es.int2symbol[es.nb_symbols] = symbol
                                 es.nb_symbols += 1
                 series.append(events)
             if len(series) > es.nb_events:
-                es.nb_events = len(series)
+                if using is None:
+                    es.nb_events = len(series)
+                else:
+                    raise ValueError(f"setlist is not compatible with using EventSeries: nb_events >= {es.nb_events}")
             allseries.append(series)
-        if max_series_length:
+        if max_series_length and using is None:
             es.nb_events = min(es.nb_events, max_series_length)
         es.series = np.zeros((es.nb_series, es.nb_events, es.nb_symbols), dtype=int)
         for sei, series in enumerate(allseries):
@@ -225,7 +264,8 @@ class EventSeries:
         return es
 
     @classmethod
-    def from_file(cls, fn, window, intonly=False, constraints=None, max_series_length=None):
+    def from_file(cls, fn, window, intonly=False, constraints=None, max_series_length=None,
+                  using: 'EventSeries'=None):
         """Convert a simple formatted file to an EventWarping object.
 
         The format is:
@@ -243,11 +283,12 @@ class EventSeries:
         :param intonly: See EventWarping
         :param constraints: See EventWarping
         :param max_series_length: Length of each series (i.e. #itemsets) is truncated to this size
+        :param using:
         :return: EventWarping object
         """
         es = None
         with fn.open("r") as fp:
-            es = cls.from_filepointer(fp, window, intonly, constraints, max_series_length)
+            es = cls.from_filepointer(fp, window, intonly, constraints, max_series_length, using=using)
         return es
 
     @classmethod
@@ -657,7 +698,7 @@ class EventSeries:
         """
         if series_ec is None:
             series_ec = series.max(axis=2)
-        assert series.shape[1] == self.nb_events
+        assert series.shape[1] == self.nb_events, f"Expected series of length {series.shape[1]}, got {self.nb_events}"
         assert series.shape[2] == self.nb_symbols
         nb_series = series.shape[0]
 
@@ -779,7 +820,7 @@ class EventSeries:
 
         return ws, wsec
 
-    def align_series_times(self, series, series_ec=None, k=1):
+    def align_series_times(self, series, series_ec=None, iterations=1):
         """Align events in the given series based on the previously computed gradients.
 
         This method can be used to align new data to the originally given data. Assuming
@@ -787,7 +828,7 @@ class EventSeries:
 
         See align_series for more informatin.
         """
-        for _ in range(k):
+        for _ in range(iterations):
             series, series_ec = self.align_series(series, series_ec)
         return series, series_ec
 
@@ -797,6 +838,9 @@ class EventSeries:
             return self._warped_series
         self._warped_series = self.series
         return self._warped_series
+
+    def likelihood(self):
+        return None
 
     def print_series(self):
         print(self.series)
