@@ -52,6 +52,8 @@ class EventSeries:
         self._zero_crossings = None
         self._warped_series: Optional[npt.NDArray[np.int]] = None
         self._warped_series_ec: Optional[npt.NDArray[np.int]] = None  # Event counts
+        self._loglikelihoods_p = None
+        self._loglikelihoods_n = None
         self._versions = [0, 0, 0, 0]  # V_WC, V_RC, V_WD, V_WS
         self.constraints = constraints
         if self.constraints is not None:
@@ -168,10 +170,12 @@ class EventSeries:
                 raise ValueError(f"window argument cannot be None if using is None")
             window = using.window
         es = EventSeries(window=window, intonly=intonly, constraints=constraints)
-        es.nb_symbols = 0 if using is None else using.nb_symbols
-        es.nb_events = 0 if using is None else using.nb_events
+        es.nb_symbols = 0
+        es.nb_events = 0
         es.nb_series = len(sl)
         if using is not None:
+            es.nb_symbols = using.nb_symbols
+            es.nb_events = using.nb_events
             es.symbol2int = using.symbol2int
             es.int2symbol = using.int2symbol
         for series in sl:
@@ -179,7 +183,8 @@ class EventSeries:
                 if using is None:
                     es.nb_events = len(series)
                 else:
-                    raise ValueError(f"setlist is not compatible with using EventSeries: nb_events >= {es.nb_events}")
+                    raise ValueError(f"setlist is not compatible with using EventSeries: "
+                                     f"nb_events={len(series)} >= {es.nb_events}")
             for event in series:
                 for symbol in event:
                     if intonly:
@@ -212,11 +217,17 @@ class EventSeries:
         return es
 
     @classmethod
-    def from_filepointer(cls, fp, window, intonly=False, constraints=None, max_series_length=None,
+    def from_filepointer(cls, fp, window=None, intonly=False, constraints=None, max_series_length=None,
                          using: 'EventSeries'=None):
         """See from_file."""
+        if window is None:
+            if using is None:
+                raise ValueError(f"window argument cannot be None if using is None")
+            window = using.window
         es = EventSeries(window, intonly=intonly, constraints=constraints)
         if using is not None:
+            es.nb_symbols = using.nb_symbols
+            es.nb_events = using.nb_events
             es.int2symbol = using.int2symbol
             es.symbol2int = using.symbol2int
         allseries = list()
@@ -250,7 +261,8 @@ class EventSeries:
                 if using is None:
                     es.nb_events = len(series)
                 else:
-                    raise ValueError(f"setlist is not compatible with using EventSeries: nb_events >= {es.nb_events}")
+                    raise ValueError(f"String is not compatible with using EventSeries: "
+                                     f"nb_events={len(series)} >= {es.nb_events}")
             allseries.append(series)
         if max_series_length and using is None:
             es.nb_events = min(es.nb_events, max_series_length)
@@ -292,10 +304,10 @@ class EventSeries:
         return es
 
     @classmethod
-    def from_string(cls, string, window, intonly=False, constraints=None, max_series_length=None):
+    def from_string(cls, string, window=None, intonly=False, constraints=None, max_series_length=None, using=None):
         import io
         fp = io.StringIO(string)
-        es = cls.from_filepointer(fp, window, intonly, constraints, max_series_length)
+        es = cls.from_filepointer(fp, window, intonly, constraints, max_series_length, using)
         return es
 
     def copy(self, filter_symbols=None):
@@ -781,7 +793,7 @@ class EventSeries:
                     if prevs == 2:
                         merged_cnts_s = scs[i - 1, prevs] + series[sei, i, :]
                         merged_cnts_e = sce[i - 1, prevs] + series_ec[sei, i]
-                        args = scs[i - 1, prevs], self._warped_series[sei, i, :]
+                        args = scs[i - 1, prevs], series[sei, i, :]
                     else:
                         merged_cnts_s = series[sei, i, :]
                         merged_cnts_e = series_ec[sei, i]
@@ -839,8 +851,45 @@ class EventSeries:
         self._warped_series = self.series
         return self._warped_series
 
-    def likelihood(self):
-        return None
+    def compute_likelihoods(self, laplace_smoothing=1):
+        """Compute all the p(s_{i,j}|e_i).
+        """
+        # self._likelihoods = np.divide(self._warped_series.sum(axis=0), self.nb_series)
+        self._loglikelihoods_p = np.divide(np.add(self._warped_series.sum(axis=0), laplace_smoothing),
+                                           self.nb_series + 2*laplace_smoothing)
+        self._loglikelihoods_n = np.log(1.0 - self._loglikelihoods_p)
+        self._loglikelihoods_p = np.log(self._loglikelihoods_p)
+
+    def likelihood(self, model: 'EventSeries'=None):
+        """Likelihood of the current eventseries given the 'model' eventseries.
+
+        LL = p(x|M) = prod_i p(x_i|e_i)p(e_i|M) = prod_i p(x_i|e_i)
+        with i the event index
+        All transitions and thus events are equally likely (this ignored).
+
+        x is a set of symbols that can appear:
+        p(x_i | e_i) = prod_j p(s_{i,j} | e_i)
+        with j the symbol index
+
+        LL = prod_{i,j} p(s_{i,j}|e_i)
+        LLL = sum_{i,j} log(p(s_{i,j}|e_i))
+
+        The intuition is that this is Naive Bayes for an event. What is the probability
+        that it is the event at time i given the set of observations.
+        Thus p(e_i | S) ~= prod_j p(s_j | e_i)
+
+        :param model: EventSeries representing the model, this eventseries if None
+        :return: Log Likelihood
+        """
+        if model is None:
+            model = self
+        if model._loglikelihoods_p is None or model._loglikelihoods_n is None:
+            model.compute_likelihoods()
+        # TODO: check what's faster, this multiplies a lot of zeros, and requires np.sign
+        ws = np.sign(self._warped_series)
+        lll = np.einsum('ijk,jk->i',  ws, model._loglikelihoods_p)
+        lll += np.einsum('ijk,jk->i',  1-ws, model._loglikelihoods_n)
+        return lll
 
     def print_series(self):
         print(self.series)

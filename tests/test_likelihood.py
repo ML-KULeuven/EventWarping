@@ -34,14 +34,19 @@ def test_likelihood7():
         # print(es.format_warped_series())
     # print(f'Result:\n{es.format_warped_series()}')
 
-    new_es = EventSeries.from_setlist(
-        [[(), ('A',), ('B',), (), (), ('A',), (), ()]],
+    new_es = EventSeries.from_string(
+        " |   A | B   |     |     |   A |     | \n"
+        " |   A | B   |     |   A |   A |     | \n"
+        " |     |   A |   A |   A |   A |     | \n"
+        " | B   |   A | B   |     | B   |     |   ",
         using=es)
     new_es.warp_with(es)
 
     print("")
     print(new_es.format_warped_series())
 
-    ll = new_es.likelihood(using=es)
-    print(f'Likelihood = {ll}')
+    es.compute_likelihoods(laplace_smoothing=0.1)
+    llls = new_es.likelihood(model=es)
+    for idx, lll in enumerate(llls):
+        print(f'Likelihood[{idx}] = exp({lll:6.2f}) = {np.exp(lll):.5f}')
 
