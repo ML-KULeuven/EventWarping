@@ -7,6 +7,7 @@ import os
 
 from eventwarping.eventseries import EventSeries
 from eventwarping.constraints import *
+from eventwarping.window import LinearScalingWindow
 
 
 # If environment variable TESTDIR is set, save figures to this
@@ -23,24 +24,26 @@ def test_likelihood7():
 
     """
     fn = Path(__file__).parent / "rsrc" / "example7.txt"
-    es = EventSeries.from_file(fn, window=5, constraints=[MaxMergeEventConstraint(1)])
+    # es = EventSeries.from_file(fn, window=5, constraints=[MaxMergeEventConstraint(1)])
+    es = EventSeries.from_file(fn, window=LinearScalingWindow(5), constraints=[MaxMergeEventConstraint(1)])
     # print('Original:\n{es.format_warped_series()}')
 
     for i in range(3):
         # print(f"=== {i} ===")
-        # plot = {'filename': str(directory / f'gradients_{i}.png'), 'symbol': {0, 1}, 'seriesidx': 0}
-        plot = None
+        plot = {'filename': str(directory / f'gradients_{i}.png'), 'symbol': {0, 1}} # , 'seriesidx': 1}
+        # plot = None
         es.warp(plot=plot)
         # print(es.format_warped_series())
     # print(f'Result:\n{es.format_warped_series()}')
 
     new_es = EventSeries.from_string(
         " |   A | B   |     |     |   A |     | \n"
+        " |     |     |   A | B   |     |   A | \n"
         " |   A | B   |     |   A |   A |     | \n"
         " |     |   A |   A |   A |   A |     | \n"
         " | B   |   A | B   |     | B   |     |   ",
         using=es)
-    new_es.warp_with(es)
+    new_es.warp_with(es, iterations=3)
 
     print("")
     print(new_es.format_warped_series())

@@ -7,6 +7,8 @@ import numpy as np
 import numpy.typing as npt
 from scipy import signal, special
 
+from .window import Window
+
 
 # Index for version of
 V_WC = 0  # windowed counts
@@ -28,9 +30,6 @@ class EventSeries:
         :param constraints: List of objects inheriting from ConstraintsBaseClass
             See classes in eventwarping.Constraints
         """
-        if window % 2 == 0:
-            raise ValueError(f"Argument window should be an uneven number.")
-
         self.series: Optional[npt.NDArray[np.int]] = None  # shape = (nb_series, nb_events, nb_symbols)
         self.intonly = intonly
         self.symbol2int = dict()
@@ -38,7 +37,7 @@ class EventSeries:
         self.nb_series = 0
         self.nb_events = 0  # length of series (of sets)
         self.nb_symbols = 0  # maximal size of set that represents an event
-        self.window = window
+        self.window = Window.wrap(window)
         self.count_thr = 5  # expected minimal number of events
         self.rescale_power = 1  # Raise counts to this power and rescale
         self.rescale_weights = dict()  # Symbol idx to weight factor
@@ -351,7 +350,7 @@ class EventSeries:
             ws[:, (1+nb_spacers)*i, :] = self._warped_series[:, i, :]
         self.series = ws
         self.nb_events = new_nb_events
-        self.window = ((self.window // 2) + nb_spacers)*2 + 1
+        self.window.insert_spaces(nb_spacers)
         self.reset()
 
     def get_counts(self, ignore_merged=False, filter_symbols=None):
@@ -400,6 +399,7 @@ class EventSeries:
         """
         if self._warped_series is None:
             self._warped_series = self.series
+        window = self.window.counting(self._versions[V_WC])
         # Only count occurrence of a symbol in a series once, even though
         # we keep track of how many are merged but this information should not be used for counts
         ws = np.sign(self._warped_series)
@@ -412,22 +412,25 @@ class EventSeries:
         self._factors = 1 - np.log2(np.divide(1, ws_sum)) / max_entropy
         self._factors[np.isinf(self._factors)] = 1
         ws = ws * self._factors[:, np.newaxis, :]
+        c = ws.sum(axis=0)
 
         # Sliding window to aggregate from neighbours
-        sides = int((self.window - 1) / 2)
-        wc = np.zeros((self.nb_symbols, self.nb_events))
-        # w = np.lib.stride_tricks.sliding_window_view(ws, (self.nb_series, self.window), (0, 1))
-        # wc[:, sides:-sides] = w.sum(axis=(-2, -1))[0].T
-        c = ws.sum(axis=0)
-        w = np.lib.stride_tricks.sliding_window_view(c, (self.window,), axis=(0,))
-        wc[:, sides:-sides] = w.sum(axis=2).T
-        # Pad the beginning and ending with the same values (having half a window can lower the count)
-        wc[:, :sides] = wc[:, sides:sides+1]
-        wc[:, -sides:] = wc[:, -sides-1:-sides]
-        # Add without a window (otherwise the begin and end cannot differentiate)
-        # c = ws.sum(axis=0).T
-        self._windowed_counts = np.add(wc, c.T) / 2
-        # self._windowed_counts = wc
+        if window > 1:
+            sides = int((window - 1) / 2)
+            wc = np.zeros((self.nb_symbols, self.nb_events))
+            # w = np.lib.stride_tricks.sliding_window_view(ws, (self.nb_series, window), (0, 1))
+            # wc[:, sides:-sides] = w.sum(axis=(-2, -1))[0].T
+            w = np.lib.stride_tricks.sliding_window_view(c, (window,), axis=(0,))
+            wc[:, sides:-sides] = w.sum(axis=2).T
+            # Pad the beginning and ending with the same values (having half a window can lower the count)
+            wc[:, :sides] = wc[:, sides:sides+1]
+            wc[:, -sides:] = wc[:, -sides-1:-sides]
+            # Add without a window (otherwise the begin and end cannot differentiate)
+            # c = ws.sum(axis=0).T
+            self._windowed_counts = np.add(wc, c.T) / 2
+            # self._windowed_counts = wc
+        else:
+            self._windowed_counts = c.T
 
         self._versions[V_WC] += 1
         return self._windowed_counts
@@ -502,11 +505,12 @@ class EventSeries:
         # If windowed_counts has not yet been recomputed, do so
         if self._versions[V_WD] == self._versions[V_RC]:
             self.compute_rescaled_counts()
+        window = self.window.smoothing(self._versions[V_WD])
 
         # Setup up kernel
         # Smooth window to double its size, a window on each side of the window
         # (but make sure it is uneven to be centered)
-        kernel_side = self.window // 2
+        kernel_side = window // 2
         kernel_width = int(kernel_side * 2 + 1)
         kernel = signal.windows.hann(kernel_width)  # make sure to be uneven to be centered
         # kernel = np.vstack([kernel] * 2)  # kernel per symbol
