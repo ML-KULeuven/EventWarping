@@ -3,6 +3,10 @@ import math
 
 class Window:
     def __init__(self, value):
+        """Create window with given size.
+
+        :param value: Window size
+        """
         if type(value) is int:
             if value % 2 == 0:
                 raise ValueError(f"Argument window should be an uneven number (got {value}).")
@@ -12,12 +16,26 @@ class Window:
         self._values = value
 
     def counting(self, item):
+        """Window to use for counting.
+
+        :param item: Current iteration number
+        :returns: Window size
+        """
         return self._values
 
     def smoothing(self, item):
+        """Window to use for smoothing.
+
+        :param item: Current iteration number
+        :returns: Window size
+        """
         return self._values
 
     def insert_spacers(self, nb_spacers):
+        """Enlarge the window to take into account the spacers inserted.
+
+        :param nb_spacers: Number of spacers
+        """
         self._values = ((self._values // 2) + nb_spacers)*2 + 1
 
     def __str__(self):

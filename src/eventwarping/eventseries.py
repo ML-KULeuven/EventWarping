@@ -1,6 +1,6 @@
-import collections
 from pathlib import Path
 from typing import Optional
+from collections.abc import Iterable
 import math
 
 import numpy as np
@@ -83,6 +83,8 @@ class EventSeries:
     def warp_yield(self, iterations=10, restart=False, plot=None):
         if plot is not None:
             import matplotlib.pyplot as plt
+        else:
+            plt = None
         if restart:
             self.reset()
         for it in range(iterations):
@@ -104,7 +106,7 @@ class EventSeries:
 
     @classmethod
     def from_setlistfile(cls, fn, window, intonly=False, constraints=None, max_series_length=None,
-                         using: 'EventSeries'=None):
+                         using: 'EventSeries' = None):
         """Read a setlist file and create an eventwarping object.
         A file where each line is a list of sets of symbols (using Python syntax).
         Each set represents a time point.
@@ -113,7 +115,8 @@ class EventSeries:
         :param window: See EventWarping
         :param intonly: See EventWarping
         :param constraints: See EventWarping
-        :param using:
+        :param max_series_length:
+        :param using: Use dictionary from the given EventWarping object
         :return: EventWarping object
         """
         import ast
@@ -127,7 +130,7 @@ class EventSeries:
 
     @classmethod
     def from_setlistfiles(cls, fns, window, intonly=False, selected=None,
-                          constraints=None, max_series_length=None, using: 'EventSeries'=None):
+                          constraints=None, max_series_length=None, using: 'EventSeries' = None):
         """Read a list of setlist file and create an eventwarping object.
         A file where each line is a list of sets of symbols (using Python syntax).
         Each set represents a time point.
@@ -157,7 +160,7 @@ class EventSeries:
 
     @classmethod
     def from_setlist(cls, sl, window=None, intonly=False, constraints=None, max_series_length=None,
-                     using: 'EventSeries'=None):
+                     using: 'EventSeries' = None):
         """Convert a setlist (a Python list of lists of sets of symbols) to an eventwarping object.
 
         :param sl: List of lists of sets of symbols
@@ -186,27 +189,11 @@ class EventSeries:
                 if using is None:
                     es.nb_events = len(series)
                 else:
-                    raise ValueError(f"setlist is not compatible with using EventSeries: "
+                    raise ValueError(f"setlist is not compatible with the using EventSeries: "
                                      f"nb_events={len(series)} >= {es.nb_events}")
             for event in series:
                 for symbol in event:
-                    if intonly:
-                        if type(symbol) is not int:
-                            raise ValueError(f"Symbol is not an int: {symbol}")
-                        if symbol >= es.nb_symbols:
-                            if using is None:
-                                es.nb_symbols = symbol + 1
-                            else:
-                                raise ValueError(
-                                    f"setlist is not compatible with using EventSeries: nb_symbols >= {es.nb_symbols}")
-                    else:
-                        if symbol not in es.symbol2int:
-                            if using is not None:
-                                raise ValueError(
-                                    f"setlist is not compatible with using EventSeries: unknown symbol {symbol}")
-                            es.symbol2int[symbol] = es.nb_symbols
-                            es.int2symbol[es.nb_symbols] = symbol
-                            es.nb_symbols += 1
+                    EventSeries.parse_symbol(symbol, es, intonly, using)
         if max_series_length and using is None:
             es.nb_events = min(es.nb_events, max_series_length)
         es.series = np.zeros((es.nb_series, es.nb_events, es.nb_symbols), dtype=int)
@@ -219,9 +206,31 @@ class EventSeries:
         es.series_changed()
         return es
 
+    @staticmethod
+    def parse_symbol(symbol, es, intonly, using):
+        if intonly:
+            if type(symbol) is not int:
+                raise ValueError(f"Symbol is not int: {symbol}")
+            if symbol >= es.nb_symbols:
+                if using is None:
+                    es.nb_symbols = symbol + 1
+                else:
+                    raise ValueError(
+                        f"String is not compatible with the using EventSeries: "
+                        f"nb_events >= {es.nb_events}")
+        else:
+            if symbol not in es.symbol2int:
+                if using is not None:
+                    raise ValueError(
+                        f"String is not compatible with the using EventSeries: "
+                        f"unknown symbol {symbol}")
+                es.symbol2int[symbol] = es.nb_symbols
+                es.int2symbol[es.nb_symbols] = symbol
+                es.nb_symbols += 1
+
     @classmethod
     def from_filepointer(cls, fp, window=None, intonly=False, constraints=None, max_series_length=None,
-                         using: 'EventSeries'=None):
+                         using: 'EventSeries' = None):
         """See from_file."""
         if window is None:
             if using is None:
@@ -242,23 +251,7 @@ class EventSeries:
                 if events != "":
                     events = [e.strip() for e in events.strip().split(" ") if e.strip() != ""]
                     for symbol in events:
-                        if intonly:
-                            if type(symbol) is not int:
-                                raise ValueError(f"Symbol is not int: {symbol}")
-                            if symbol >= es.nb_symbols:
-                                if using is None:
-                                    es.nb_symbols = symbol + 1
-                                else:
-                                    raise ValueError(
-                                        f"setlist is not compatible with using EventSeries: nb_events >= {es.nb_events}")
-                        else:
-                            if symbol not in es.symbol2int:
-                                if using is not None:
-                                    raise ValueError(
-                                        f"setlist is not compatible with using EventSeries: unknown symbol {symbol}")
-                                es.symbol2int[symbol] = es.nb_symbols
-                                es.int2symbol[es.nb_symbols] = symbol
-                                es.nb_symbols += 1
+                        EventSeries.parse_symbol(symbol, es, intonly, using)
                 series.append(events)
             if len(series) > es.nb_events:
                 if using is None:
@@ -280,7 +273,7 @@ class EventSeries:
 
     @classmethod
     def from_file(cls, fn, window, intonly=False, constraints=None, max_series_length=None,
-                  using: 'EventSeries'=None):
+                  using: 'EventSeries' = None):
         """Convert a simple formatted file to an EventWarping object.
 
         The format is:
@@ -298,10 +291,9 @@ class EventSeries:
         :param intonly: See EventWarping
         :param constraints: See EventWarping
         :param max_series_length: Length of each series (i.e. #itemsets) is truncated to this size
-        :param using:
+        :param using: Parse based on an existing EventWarping object
         :return: EventWarping object
         """
-        es = None
         with fn.open("r") as fp:
             es = cls.from_filepointer(fp, window, intonly, constraints, max_series_length, using=using)
         return es
@@ -624,7 +616,8 @@ class EventSeries:
         # entr = - np.sum(np.multiply(dens, np.log2(dens)), axis=1)
         return 1 - entr / max_entropy
 
-    def _best_warped_path(self, cc, ps=None):
+    @staticmethod
+    def _best_warped_path(cc, ps=None):
         """
 
         :param cc: Cumulative Cost matrix
@@ -714,7 +707,7 @@ class EventSeries:
         that warping has been applied to that originally given data.
 
         :param series: Series is an array with dimensions (series, event, symbol)
-        :param series: For every event, of how many merges this event is constructed.
+        :param series_ec: For every event, of how many merges this event is constructed.
             Dimensions are (series, nb of events)
         """
         if series_ec is None:
@@ -877,7 +870,7 @@ class EventSeries:
         self._loglikelihoods_n = np.log(1.0 - self._loglikelihoods_p)
         self._loglikelihoods_p = np.log(self._loglikelihoods_p)
 
-    def likelihood(self, model: 'EventSeries'=None):
+    def likelihood(self, model: 'EventSeries' = None):
         """Likelihood of the current eventseries given the 'model' eventseries.
 
         LL = p(x|M) = prod_i p(x_i|e_i)p(e_i|M) = prod_i p(x_i|e_i)
@@ -925,13 +918,13 @@ class EventSeries:
         if self.intonly:
             sl = math.floor(math.log(self.nb_symbols - 1, 10)) + 1 + 1
 
-            def fmt_symbol(syi):
-                return f"{syi:>{sl}}"
+            def fmt_symbol(sy_i):
+                return f"{sy_i:>{sl}}"
         else:
             sl = max(len(str(k)) for k in self.symbol2int.keys()) + 1
 
-            def fmt_symbol(syi):
-                return f"{self.int2symbol[syi]:>{sl}}"
+            def fmt_symbol(sy_i):
+                return f"{self.int2symbol[sy_i]:>{sl}}"
         empty = " " * sl
         s = ''
         for sei in range(self.nb_series):
@@ -958,13 +951,13 @@ class EventSeries:
         import matplotlib.pyplot as plt
         if type(symbol) is int:
             symbol = [symbol]
-        elif type(symbol) is not list and isinstance(symbol, collections.abc.Iterable):
+        elif type(symbol) is not list and isinstance(symbol, Iterable):
             symbol = list(symbol)
         elif symbol is None:
             symbol = []
         if type(seriesidx) is int:
             seriesidx = [seriesidx]
-        elif type(seriesidx) is not list and isinstance(seriesidx, collections.abc.Iterable):
+        elif type(seriesidx) is not list and isinstance(seriesidx, Iterable):
             seriesidx = list(seriesidx)
         elif seriesidx is None:
             seriesidx = []
@@ -1043,9 +1036,9 @@ class EventSeries:
         """Plot the counts of all symbols over all events (aggregated over the series).
 
         :param filename: Plot directly to a file
+        :param filter_symbols:
         :returns: fig, axs if filename is not given
         """
-        import matplotlib as mpl
         import matplotlib.pyplot as plt
         fig, axs = plt.subplots(nrows=1, ncols=2, figsize=(10, 8))
 
