@@ -44,6 +44,8 @@ def test_likelihood7():
         " | B   |   A | B   |     | B   |     |   ",
         using=es)
     new_es.warp_with(es, iterations=3)
+    print("")
+    print(f"Done warping. Converged={new_es._converged}")
 
     print("")
     print(new_es.format_warped_series())

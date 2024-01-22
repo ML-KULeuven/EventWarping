@@ -51,6 +51,7 @@ class EventSeries:
         self._zero_crossings = None
         self._warped_series: Optional[npt.NDArray[np.int]] = None
         self._warped_series_ec: Optional[npt.NDArray[np.int]] = None  # Event counts
+        self._converged = None
         self._loglikelihoods_p = None
         self._loglikelihoods_n = None
         self._versions = [0, 0, 0, 0]  # V_WC, V_RC, V_WD, V_WS
@@ -65,6 +66,7 @@ class EventSeries:
         self._warping_directions = None
         self._warped_series = None
         self._warped_series_ec = None
+        self._converged = None
         self._versions = [0, 0, 0, 0]
 
     def series_changed(self):
@@ -73,17 +75,19 @@ class EventSeries:
             for constraint in self.constraints:
                 constraint.es = self
 
-    def warp(self, iterations=1, restart=False, plot=None):
+    def warp(self, iterations=10, restart=False, plot=None):
         for _ in self.warp_yield(iterations=iterations, restart=restart, plot=plot):
             pass
         return self.warped_series
 
-    def warp_yield(self, iterations=1, restart=False, plot=None):
+    def warp_yield(self, iterations=10, restart=False, plot=None):
         if plot is not None:
             import matplotlib.pyplot as plt
         if restart:
             self.reset()
         for it in range(iterations):
+            if self._converged is not None:
+                break
             self.compute_windowed_counts()
             self.compute_rescaled_counts()
             self.compute_warping_directions()
@@ -95,8 +99,8 @@ class EventSeries:
             self.compute_warped_series()
             yield self.warped_series
 
-    def warp_with(self, es: 'EventSeries', iterations=1):
-        self._warped_series, _ = es.align_series_times(self.warped_series, iterations=iterations)
+    def warp_with(self, es: 'EventSeries', iterations=10):
+        self._warped_series, _, self._converged = es.align_series_times(self.warped_series, iterations=iterations)
 
     @classmethod
     def from_setlistfile(cls, fn, window, intonly=False, constraints=None, max_series_length=None,
@@ -350,7 +354,7 @@ class EventSeries:
             ws[:, (1+nb_spacers)*i, :] = self._warped_series[:, i, :]
         self.series = ws
         self.nb_events = new_nb_events
-        self.window.insert_spaces(nb_spacers)
+        self.window.insert_spacers(nb_spacers)
         self.reset()
 
     def get_counts(self, ignore_merged=False, filter_symbols=None):
@@ -695,8 +699,9 @@ class EventSeries:
             self._warped_series_ec = self._warped_series.max(axis=2)
 
         assert self._warped_series.shape[0] == self.nb_series
-        ws, wsec = self.align_series(self._warped_series, self._warped_series_ec)
+        ws, wsec, converged = self.align_series(self._warped_series, self._warped_series_ec)
 
+        self._converged = None if converged is False else self._versions[V_WS]
         self._warped_series = ws
         self._warped_series_ec = wsec
         self._versions[V_WS] += 1
@@ -717,6 +722,7 @@ class EventSeries:
         assert series.shape[1] == self.nb_events, f"Expected series of length {series.shape[1]}, got {self.nb_events}"
         assert series.shape[2] == self.nb_symbols
         nb_series = series.shape[0]
+        converged = True
 
         ws = np.zeros((nb_series, self.nb_events, self.nb_symbols), dtype=int)
         wsec = np.zeros((nb_series, self.nb_events), dtype=int)
@@ -831,10 +837,12 @@ class EventSeries:
 
             # Do realignment
             for i_from, i_to in path:
+                if converged is True and i_to != i_from:
+                    converged = False
                 ws[sei, i_to, :] = ws[sei, i_to, :] + series[sei, i_from, :]
                 wsec[sei, i_to] = wsec[sei, i_to] + series_ec[sei, i_from]
 
-        return ws, wsec
+        return ws, wsec, converged
 
     def align_series_times(self, series, series_ec=None, iterations=1):
         """Align events in the given series based on the previously computed gradients.
@@ -844,9 +852,14 @@ class EventSeries:
 
         See align_series for more informatin.
         """
-        for _ in range(iterations):
-            series, series_ec = self.align_series(series, series_ec)
-        return series, series_ec
+        converged = None
+        for idx in range(iterations):
+            series, series_ec, converged = self.align_series(series, series_ec)
+            if converged is True:
+                converged = idx
+                print(f"Stopped after {converged=}")
+                break
+        return series, series_ec, converged
 
     @property
     def warped_series(self):
