@@ -41,17 +41,14 @@ def test_likelihood7():
         " |     |     |   A | B   |     |   A | \n"
         " |   A | B   |     |   A |   A |     | \n"
         " |     |   A |   A |   A |   A |     | \n"
+        " | B   |   A | B   |     | B   |   A | \n"
         " | B   |   A | B   |     | B   |     |   ",
-        using=es)
-    new_es.warp_with(es, iterations=3)
-    print("")
-    print(f"Done warping. Converged={new_es._converged}")
-
-    print("")
-    print(new_es.format_warped_series())
+        model=es)
+    new_es.warp_with_model(iterations=3)
+    print(f"\nDone warping. {new_es.converged_str}")
+    print("\n" + new_es.format_warped_series())
 
     es.compute_likelihoods(laplace_smoothing=0.1)
-    llls = new_es.likelihood(model=es)
+    llls = new_es.likelihood_with_model()
     for idx, lll in enumerate(llls):
         print(f'Likelihood[{idx}] = exp({lll:6.2f}) = {np.exp(lll):.5f}')
-

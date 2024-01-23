@@ -52,6 +52,7 @@ class EventSeries:
         self._warped_series: Optional[npt.NDArray[np.int]] = None
         self._warped_series_ec: Optional[npt.NDArray[np.int]] = None  # Event counts
         self._converged = None
+        self.model = None
         self._loglikelihoods_p = None
         self._loglikelihoods_n = None
         self._versions = [0, 0, 0, 0]  # V_WC, V_RC, V_WD, V_WS
@@ -101,12 +102,22 @@ class EventSeries:
             self.compute_warped_series()
             yield self.warped_series
 
-    def warp_with(self, es: 'EventSeries', iterations=10):
-        self._warped_series, _, self._converged = es.align_series_times(self.warped_series, iterations=iterations)
+    def warp_with_model(self, model: 'EventSeries' = None, iterations=10):
+        """Warp this EventSeries based on the gradients in the given model."""
+        if model is None:
+            model = self.model
+        self._warped_series, _, self._converged = model.align_series_times(self.warped_series, iterations=iterations)
+        self._versions[V_WS] += iterations if self._converged is None else self._converged
+
+    @property
+    def converged_str(self):
+        if self._converged is None:
+            return f"Warping did not yet converge after {self._versions[V_WS]} iterations."
+        return f"Warping converged after {self._converged+1} iterations."
 
     @classmethod
     def from_setlistfile(cls, fn, window, intonly=False, constraints=None, max_series_length=None,
-                         using: 'EventSeries' = None):
+                         model: 'EventSeries' = None):
         """Read a setlist file and create an eventwarping object.
         A file where each line is a list of sets of symbols (using Python syntax).
         Each set represents a time point.
@@ -116,7 +127,7 @@ class EventSeries:
         :param intonly: See EventWarping
         :param constraints: See EventWarping
         :param max_series_length:
-        :param using: Use dictionary from the given EventWarping object
+        :param model: Use dictionary from the given EventWarping object
         :return: EventWarping object
         """
         import ast
@@ -126,11 +137,11 @@ class EventSeries:
         with fn.open("r") as fp:
             for line in fp.readlines():
                 data.append(ast.literal_eval(line))
-        return cls.from_setlist(data, window, intonly, constraints, max_series_length, using=using)
+        return cls.from_setlist(data, window, intonly, constraints, max_series_length, model=model)
 
     @classmethod
     def from_setlistfiles(cls, fns, window, intonly=False, selected=None,
-                          constraints=None, max_series_length=None, using: 'EventSeries' = None):
+                          constraints=None, max_series_length=None, model: 'EventSeries' = None):
         """Read a list of setlist file and create an eventwarping object.
         A file where each line is a list of sets of symbols (using Python syntax).
         Each set represents a time point.
@@ -141,7 +152,7 @@ class EventSeries:
         :param selected: Boolean list. Only use the i-th series if selected[i] is True
         :param constraints: See EventWarping
         :param max_series_length: See from_setlist
-        :param using:
+        :param model:
         :return: EventWarping object
         """
         import ast
@@ -156,11 +167,11 @@ class EventSeries:
                         data_line = ast.literal_eval(line)
                         data.append(data_line)
                     i += 1
-        return cls.from_setlist(data, window, intonly, constraints, max_series_length, using=using)
+        return cls.from_setlist(data, window, intonly, constraints, max_series_length, model=model)
 
     @classmethod
     def from_setlist(cls, sl, window=None, intonly=False, constraints=None, max_series_length=None,
-                     using: 'EventSeries' = None):
+                     model: 'EventSeries' = None):
         """Convert a setlist (a Python list of lists of sets of symbols) to an eventwarping object.
 
         :param sl: List of lists of sets of symbols
@@ -168,33 +179,34 @@ class EventSeries:
         :param intonly: See EventWarping
         :param constraints: See EventWarping
         :param max_series_length: Length of each series (i.e. #itemsets) is truncated to this size
-        :param using: Parse based on given EventSeries object
+        :param model: Parse based on given EventSeries object
         :return: EventWarping object
         """
         if window is None:
-            if using is None:
-                raise ValueError(f"window argument cannot be None if using is None")
-            window = using.window
+            if model is None:
+                raise ValueError(f"window argument cannot be None if model is None")
+            window = model.window
         es = EventSeries(window=window, intonly=intonly, constraints=constraints)
         es.nb_symbols = 0
         es.nb_events = 0
         es.nb_series = len(sl)
-        if using is not None:
-            es.nb_symbols = using.nb_symbols
-            es.nb_events = using.nb_events
-            es.symbol2int = using.symbol2int
-            es.int2symbol = using.int2symbol
+        if model is not None:
+            es.model = model
+            es.nb_symbols = model.nb_symbols
+            es.nb_events = model.nb_events
+            es.symbol2int = model.symbol2int
+            es.int2symbol = model.int2symbol
         for series in sl:
             if len(series) > es.nb_events:
-                if using is None:
+                if es.model is None:
                     es.nb_events = len(series)
                 else:
-                    raise ValueError(f"setlist is not compatible with the using EventSeries: "
+                    raise ValueError(f"setlist is not compatible with the model: "
                                      f"nb_events={len(series)} >= {es.nb_events}")
             for event in series:
                 for symbol in event:
-                    EventSeries.parse_symbol(symbol, es, intonly, using)
-        if max_series_length and using is None:
+                    EventSeries.parse_symbol(symbol, es, intonly)
+        if max_series_length and es.model is None:
             es.nb_events = min(es.nb_events, max_series_length)
         es.series = np.zeros((es.nb_series, es.nb_events, es.nb_symbols), dtype=int)
         for sei, series in enumerate(sl):
@@ -207,22 +219,22 @@ class EventSeries:
         return es
 
     @staticmethod
-    def parse_symbol(symbol, es, intonly, using):
+    def parse_symbol(symbol, es, intonly):
         if intonly:
             if type(symbol) is not int:
                 raise ValueError(f"Symbol is not int: {symbol}")
             if symbol >= es.nb_symbols:
-                if using is None:
+                if es.model is None:
                     es.nb_symbols = symbol + 1
                 else:
                     raise ValueError(
-                        f"String is not compatible with the using EventSeries: "
+                        f"String is not compatible with the model: "
                         f"nb_events >= {es.nb_events}")
         else:
             if symbol not in es.symbol2int:
-                if using is not None:
+                if es.model is not None:
                     raise ValueError(
-                        f"String is not compatible with the using EventSeries: "
+                        f"String is not compatible with the model: "
                         f"unknown symbol {symbol}")
                 es.symbol2int[symbol] = es.nb_symbols
                 es.int2symbol[es.nb_symbols] = symbol
@@ -230,18 +242,19 @@ class EventSeries:
 
     @classmethod
     def from_filepointer(cls, fp, window=None, intonly=False, constraints=None, max_series_length=None,
-                         using: 'EventSeries' = None):
+                         model: 'EventSeries' = None):
         """See from_file."""
         if window is None:
-            if using is None:
-                raise ValueError(f"window argument cannot be None if using is None")
-            window = using.window
+            if model is None:
+                raise ValueError(f"window argument cannot be None if model is None")
+            window = model.window
         es = EventSeries(window, intonly=intonly, constraints=constraints)
-        if using is not None:
-            es.nb_symbols = using.nb_symbols
-            es.nb_events = using.nb_events
-            es.int2symbol = using.int2symbol
-            es.symbol2int = using.symbol2int
+        if model is not None:
+            es.model = model
+            es.nb_symbols = model.nb_symbols
+            es.nb_events = model.nb_events
+            es.int2symbol = model.int2symbol
+            es.symbol2int = model.symbol2int
         allseries = list()
         for line in fp.readlines():
             series = []
@@ -251,16 +264,16 @@ class EventSeries:
                 if events != "":
                     events = [e.strip() for e in events.strip().split(" ") if e.strip() != ""]
                     for symbol in events:
-                        EventSeries.parse_symbol(symbol, es, intonly, using)
+                        EventSeries.parse_symbol(symbol, es, intonly)
                 series.append(events)
             if len(series) > es.nb_events:
-                if using is None:
+                if es.model is None:
                     es.nb_events = len(series)
                 else:
-                    raise ValueError(f"String is not compatible with using EventSeries: "
+                    raise ValueError(f"String is not compatible with model: "
                                      f"nb_events={len(series)} >= {es.nb_events}")
             allseries.append(series)
-        if max_series_length and using is None:
+        if max_series_length and es.model is None:
             es.nb_events = min(es.nb_events, max_series_length)
         es.series = np.zeros((es.nb_series, es.nb_events, es.nb_symbols), dtype=int)
         for sei, series in enumerate(allseries):
@@ -273,7 +286,7 @@ class EventSeries:
 
     @classmethod
     def from_file(cls, fn, window, intonly=False, constraints=None, max_series_length=None,
-                  using: 'EventSeries' = None):
+                  model: 'EventSeries' = None):
         """Convert a simple formatted file to an EventWarping object.
 
         The format is:
@@ -291,18 +304,20 @@ class EventSeries:
         :param intonly: See EventWarping
         :param constraints: See EventWarping
         :param max_series_length: Length of each series (i.e. #itemsets) is truncated to this size
-        :param using: Parse based on an existing EventWarping object
+        :param model: Parse based on an existing EventWarping object
+            (this uses the already existing symbol dictionary)
         :return: EventWarping object
         """
         with fn.open("r") as fp:
-            es = cls.from_filepointer(fp, window, intonly, constraints, max_series_length, using=using)
+            es = cls.from_filepointer(fp, window, intonly, constraints, max_series_length, model=model)
         return es
 
     @classmethod
-    def from_string(cls, string, window=None, intonly=False, constraints=None, max_series_length=None, using=None):
+    def from_string(cls, string, window=None, intonly=False, constraints=None, max_series_length=None, model=None):
+        """See from_file."""
         import io
         fp = io.StringIO(string)
-        es = cls.from_filepointer(fp, window, intonly, constraints, max_series_length, using)
+        es = cls.from_filepointer(fp, window, intonly, constraints, max_series_length, model)
         return es
 
     def copy(self, filter_symbols=None):
@@ -850,8 +865,10 @@ class EventSeries:
             series, series_ec, converged = self.align_series(series, series_ec)
             if converged is True:
                 converged = idx
-                print(f"Stopped after {converged=}")
+                # print(f"Stopped after {converged=}")
                 break
+            else:
+                converged = None
         return series, series_ec, converged
 
     @property
@@ -869,6 +886,12 @@ class EventSeries:
                                            self.nb_series + 2*laplace_smoothing)
         self._loglikelihoods_n = np.log(1.0 - self._loglikelihoods_p)
         self._loglikelihoods_p = np.log(self._loglikelihoods_p)
+
+    def likelihood_with_model(self):
+        """Compute likelihood of this EventSeries given the stored model."""
+        if self.model is None:
+            raise ValueError(f"This EventSeries has no associated model, use the 'likelihood' method.")
+        return self.likelihood(self.model)
 
     def likelihood(self, model: 'EventSeries' = None):
         """Likelihood of the current eventseries given the 'model' eventseries.
