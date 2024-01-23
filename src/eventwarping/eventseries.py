@@ -97,7 +97,7 @@ class EventSeries:
             if plot is not None:
                 fig, axs = self.plot_directions(symbol=plot.get("symbol", None),
                                                 seriesidx=plot.get("seriesidx", None))
-                fig.savefig(plot['filename'].format(it=it), bbox_inches='tight')
+                fig.savefig(plot['filename'].format(iteration=it, it=it), bbox_inches='tight')
                 plt.close(fig)
             self.compute_warped_series()
             yield self.warped_series
@@ -495,6 +495,22 @@ class EventSeries:
         if self._rescaled_counts is not None:
             return self._rescaled_counts
         return self.compute_rescaled_counts()
+
+    def update_gradients_without_warping(self, window=None, plot=None):
+        """Recompute the gradients, possibly with a different window, without changing the series."""
+        if plot is not None:
+            import matplotlib.pyplot as plt
+        else:
+            plt = None
+        if window is not None:
+            self.window = window
+        self.compute_warping_directions()
+        self._versions[V_WS] += 1  # Do not change warping
+        if plot is not None:
+            fig, axs = self.plot_directions(symbol=plot.get("symbol", None),
+                                            seriesidx=plot.get("seriesidx", None))
+            fig.savefig(plot['filename'], bbox_inches='tight')
+            plt.close(fig)
 
     def compute_warping_directions(self):
         """

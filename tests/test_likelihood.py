@@ -7,7 +7,7 @@ import os
 
 from eventwarping.eventseries import EventSeries
 from eventwarping.constraints import *
-from eventwarping.window import LinearScalingWindow
+from eventwarping.window import LinearScalingWindow, CountAndSmoothWindow
 
 
 # If environment variable TESTDIR is set, save figures to this
@@ -23,18 +23,23 @@ def test_likelihood7():
          |   A | B   |     |     |   A |     |
 
     """
+    use_scaling_window = True
     fn = Path(__file__).parent / "rsrc" / "example7.txt"
-    # es = EventSeries.from_file(fn, window=5, constraints=[MaxMergeEventConstraint(1)])
-    es = EventSeries.from_file(fn, window=LinearScalingWindow(5), constraints=[MaxMergeEventConstraint(1)])
+    if use_scaling_window:
+        es = EventSeries.from_file(fn, window=LinearScalingWindow(5), constraints=[MaxMergeEventConstraint(1)])
+    else:
+        es = EventSeries.from_file(fn, window=5, constraints=[MaxMergeEventConstraint(1)])
     # print('Original:\n{es.format_warped_series()}')
 
-    for i in range(3):
-        # print(f"=== {i} ===")
-        plot = {'filename': str(directory / f'gradients_{i}.png'), 'symbol': {0, 1}} # , 'seriesidx': 1}
-        # plot = None
-        es.warp(plot=plot)
-        # print(es.format_warped_series())
-    # print(f'Result:\n{es.format_warped_series()}')
+    nb_iterations = 3
+    plot = {'filename': str(directory / 'gradients_{iteration}.png'), 'symbol': {0, 1}} # , 'seriesidx': 1}
+    # plot = None
+    es.warp(iterations=nb_iterations, plot=plot)
+
+    if not use_scaling_window:
+        # Do one additional iteration to update the gradients with a different window
+        plot = {'filename': str(directory / f'gradients_{nb_iterations}.png'), 'symbol': {0, 1}}
+        es.update_gradients_without_warping(window=CountAndSmoothWindow(1, 5), plot=plot)
 
     new_es = EventSeries.from_string(
         " |   A | B   |     |     |   A |     | \n"

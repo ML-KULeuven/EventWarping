@@ -50,6 +50,23 @@ class Window:
         raise ValueError(f"Unknown value type for a window: {object} ({type(object)}")
 
 
+class CountAndSmoothWindow(Window):
+    def __init__(self, count_window, smooth_window):
+        """Create a window that has a different size for the window for
+        computing counts and for smoothing the counts.
+        """
+        super().__init__([count_window, smooth_window])
+
+    def counting(self, item):
+        return self._values[0]
+
+    def smoothing(self, item):
+        return self._values[1]
+
+    def insert_spacers(self, nb_spacers):
+        self._values = [((value // 2) + nb_spacers)*2 + 1 for value in self._values]
+
+
 class LinearScalingWindow(Window):
     def __init__(self, start, stop=0, step=-2, delay=1):
         """Change the window size over time.
