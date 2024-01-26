@@ -7,7 +7,7 @@ import os
 
 from eventwarping.eventseries import EventSeries
 from eventwarping.constraints import *
-from eventwarping.window import LinearScalingWindow, CountAndSmoothWindow
+from eventwarping.window import LinearScalingWindow, StaticWindow
 
 
 # If environment variable TESTDIR is set, save figures to this
@@ -39,7 +39,7 @@ def test_likelihood7():
     if not use_scaling_window:
         # Do one additional iteration to update the gradients with a different window
         plot = {'filename': str(directory / f'gradients_{nb_iterations}.png'), 'symbol': {0, 1}}
-        es.update_gradients_without_warping(window=CountAndSmoothWindow(1, 5), plot=plot)
+        es.update_gradients_without_warping(window=StaticWindow(1, 5), plot=plot)
 
     new_es = EventSeries.from_string(
         " |   A | B   |     |     |   A |     | \n"

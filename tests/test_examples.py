@@ -7,11 +7,13 @@ import os
 
 from eventwarping.eventseries import EventSeries
 from eventwarping.constraints import *
+from eventwarping.window import StaticWindow, LinearScalingWindow
 
 
 # If environment variable TESTDIR is set, save figures to this
 # directory, otherwise to the test directory
 directory = Path(os.environ.get('TESTDIR', Path(__file__).parent))
+doplots = True if os.environ.get('TESTPLOTS', 0) in [1, '1'] else False
 
 
 def test_example1():
@@ -255,3 +257,64 @@ def test_example10():
               "       | A     |       |       |     C |      ")
     np.equal(es.format_warped_series(), ws_sol)
 
+
+def test_example11():
+    """The last symbols will not align even though there the same.
+    This is because the same symbols reappear to often. Too many peaks.
+    EventWarping anchors to symbols that are infrequent in a series, but frequent
+    across series.
+    """
+    data = ["PASPSLS",
+            "SDLFPASTSLS",
+            "PTSPSLS",
+            "SDLFPTSTSLS"]
+
+    window = StaticWindow(3, 11)
+    # window = LinearScalingWindow(11, 2)
+    es = EventSeries.from_chararrays(data, window=window, constraints=[MaxMergeEventConstraint(1)])
+    es.insert_spacers(1)
+    plot = {'filename': str(directory / 'gradients_{iteration}.png'),
+            'symbol': {'S', 'L', 'P'}, 'seriesidx': (0, 1, 2)} if doplots else None
+    es.warp(iterations=20, plot=plot)
+    print(f"\nDone warping. {es.converged_str}")
+    print(es.format_warped_series(compact=True, drop_empty=False, drop_separators=True))
+    plot = {'filename': str(directory / 'gradients_20.png'),
+            'symbol': {'S', 'L', 'P'}, 'seriesidx': (0, 1, 2)} if doplots else None
+    es.isconverged = False
+    es.window = StaticWindow(1, 5)
+    es.warp(iterations=1, plot=plot)
+    print(es.format_warped_series(compact=True, drop_empty=False, drop_separators=True))
+
+
+def test_example11b():
+    """Inspired by protein sequence alignment.
+
+    https://www.ebi.ac.uk/seqdb/confluence/display/JDSAT/Multiple+Sequence+Alignment+Tool+Input+Examples
+
+    Problem:  The last symbols will not align even though there the same.
+    This is because the same symbols reappear too often. Too many peaks.
+    EventWarping anchors to symbols that are infrequent in a series, but frequent
+    across series.
+    Solution: Larger smoothing window than counting window
+    """
+    data = ["PSLS",
+            "FPASTSLS",
+            "PSLS",
+            "FPTSTSLS"]
+
+    es = EventSeries.from_chararrays(data, window=StaticWindow(5, 9),
+                                     constraints=[MaxMergeEventConstraint(1)])
+    if doplots:
+        plot = {'filename': str(directory / 'gradients_{iteration}.png'), 'symbol': {'S', 'L'}, 'seriesidx': (0, 1)}
+    else:
+        plot = None
+    es.insert_spacers(1)
+    es.warp(iterations=10, plot=plot)
+    print(f"\nDone warping. {es.converged_str}")
+    ws_res = es.format_warped_series(compact=True, drop_empty=True, drop_separators=True)
+
+    ws_sol = [" P   SLS",
+              "FPASTSLS",
+              " P   SLS",
+              "FPTSTSLS", ""]
+    assert ws_res == "\n".join(ws_sol)

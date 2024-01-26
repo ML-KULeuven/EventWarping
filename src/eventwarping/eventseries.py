@@ -218,6 +218,20 @@ class EventSeries:
         es.series_changed()
         return es
 
+    @classmethod
+    def from_chararrays(cls, chararrays, window, constraints=None, max_series_length=None,
+                        model: 'EventSeries' = None):
+        """Create EventSeries from a list of strings. In each string each character is a symbol.
+
+        For example:
+
+            data = ["ABC", "ACC"]
+
+        """
+        setlist = [[(symbol,) for symbol in list(seq)] for seq in chararrays]
+        return cls.from_setlist(setlist, window, constraints=constraints,
+                                max_series_length=max_series_length, model=model)
+
     @staticmethod
     def parse_symbol(symbol, es, intonly):
         if intonly:
@@ -582,7 +596,7 @@ class EventSeries:
         # number is the weight whether this move should be preferred. But every
         # move is just one step (otherwise it overshoots peaks).
 
-        # Only retain large enoug directions (depends on self.count_thr)
+        # Only retain large enough directions (depends on self.count_thr)
         # self._warping_directions[~((self._warping_directions > 1) | (self._warping_directions < -1))] = 0
 
         # Warping should not be beyond peak in gradients? Makes the
@@ -611,6 +625,10 @@ class EventSeries:
                 self._warping_inertia[r, c] = max(self._warping_directions[r, c - 1],
                                                   -self._warping_directions[r, lastc])
                 self._warping_directions[r, c + 1:lastc] = self._warping_directions[r, lastc]
+
+        # Gradients seem to work better than counts (link to gravity analogy?)
+        # self._warping_directions = np.einsum('ij,ij->ij', np.sign(self._warping_directions), countsf)
+        # self._warping_inertia = np.einsum('ij,ij->ij', np.sign(self._warping_inertia), countsf) / 2
 
         # Threshold values (set small gradients to zero)
         # threshold = np.quantile(np.abs(self._warping_directions), 0.1)
@@ -894,6 +912,22 @@ class EventSeries:
         self._warped_series = self.series
         return self._warped_series
 
+    @property
+    def isconverged(self):
+        if self._converged is None:
+            return False
+        else:
+            return True
+
+    @isconverged.setter
+    def isconverged(self, value):
+        if value is True:
+            self._converged = -1
+        elif type(value) is int:
+            self._converged = value
+        else:
+            self._converged = None
+
     def compute_likelihoods(self, laplace_smoothing=1):
         """Compute all the p(s_{i,j}|e_i).
         """
@@ -947,34 +981,62 @@ class EventSeries:
     def format_series(self):
         return self._format_series(self.series)
 
-    def format_warped_series(self):
+    def format_warped_series(self, compact=False, drop_empty=False, drop_separators=False):
         if self._warped_series is None:
             raise ValueError(f"No warped series computed yet (use format_series).")
-        return self._format_series(self._warped_series)
+        return self._format_series(self._warped_series, compact=compact, drop_empty=drop_empty,
+                                   drop_separators=drop_separators)
 
-    def _format_series(self, series):
+    def _format_series(self, series, compact=False, drop_empty=False, drop_separators=False):
         # (nb_series, nb_events, nb_symbols)
         if self.intonly:
-            sl = math.floor(math.log(self.nb_symbols - 1, 10)) + 1 + 1
+            if compact:
+                sl = 0
+            else:
+                sl = math.floor(math.log(self.nb_symbols - 1, 10)) + 1 + 1
 
             def fmt_symbol(sy_i):
                 return f"{sy_i:>{sl}}"
         else:
-            sl = max(len(str(k)) for k in self.symbol2int.keys()) + 1
+            if compact:
+                sl = 0
+            else:
+                sl = max(len(str(k)) for k in self.symbol2int.keys()) + 1
 
             def fmt_symbol(sy_i):
                 return f"{self.int2symbol[sy_i]:>{sl}}"
-        empty = " " * sl
+        if compact:
+            empty = ""
+            ws = np.sign(self._warped_series)
+            event_len = ws.sum(axis=2).max(axis=0)
+        else:
+            empty = " " * sl
+            event_len = None
+
         s = ''
         for sei in range(self.nb_series):
             for evi in range(self.nb_events):
+                if drop_empty and event_len[evi] == 0:
+                    continue
+                event_s = ''
                 for syi in range(self.nb_symbols):
                     if series[sei, evi, syi]:
-                        s += fmt_symbol(syi)
+                        event_s += fmt_symbol(syi)
                     else:
-                        s += empty
+                        event_s += empty
+                if compact:
+                    if event_len[evi] == 0:
+                        event_s += ' '
+                    else:
+                        event_s += ' '*(event_len[evi] - len(event_s))
+                s += event_s
                 if evi != self.nb_events - 1:
-                    s += " |"
+                    if drop_separators:
+                        pass
+                    elif compact:
+                        s += "|"
+                    else:
+                        s += " |"
             s += "\n"
         return s
 
@@ -994,6 +1056,7 @@ class EventSeries:
             symbol = list(symbol)
         elif symbol is None:
             symbol = []
+        symbol = [self.symbol2int.get(cursymbol, cursymbol) for cursymbol in symbol]
         if type(seriesidx) is int:
             seriesidx = [seriesidx]
         elif type(seriesidx) is not list and isinstance(seriesidx, Iterable):
@@ -1001,8 +1064,8 @@ class EventSeries:
         elif seriesidx is None:
             seriesidx = []
         nrows = 2
-        if self.rescale_active:
-            nrows += 1
+        # if self.rescale_active:
+        nrows += 1
         if seriesidx is not None:
             nrows += 2*len(seriesidx)
             wss, wsi = [], []
@@ -1030,14 +1093,13 @@ class EventSeries:
                 ax.legend(bbox_to_anchor=(-0.1, 1), loc='upper right')
             axrow += 1
             # Scaled counts
-            if self.rescale_active:
-                ax = axs[axrow, curidx] if len(symbol) > 1 else axs[axrow]
-                ax.plot(self._rescaled_counts[cursymbol], '-o', color=colors[2], label="Rescaled counts")
-                ax.plot(self._smoothed_counts[cursymbol], '-o', color=colors[3], label="Smoothed counts")
+            ax = axs[axrow, curidx] if len(symbol) > 1 else axs[axrow]
+            ax.plot(self._rescaled_counts[cursymbol], '-o', color=colors[2], label="Rescaled counts")
+            ax.plot(self._smoothed_counts[cursymbol], '-o', color=colors[3], label="Smoothed counts")
 
-                if curidx == 0:
-                    ax.legend(bbox_to_anchor=(-0.1, 1), loc='upper right')
-                axrow += 1
+            if curidx == 0:
+                ax.legend(bbox_to_anchor=(-0.1, 1), loc='upper right')
+            axrow += 1
             # Directions (gradients)
             ax = axs[axrow, curidx] if len(symbol) > 1 else axs[axrow]
             ax.axhline(y=0, color='r', linestyle=':', alpha=0.3)
