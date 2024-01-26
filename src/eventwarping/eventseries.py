@@ -1,11 +1,13 @@
-import collections
 from pathlib import Path
 from typing import Optional
+from collections.abc import Iterable
 import math
 
 import numpy as np
 import numpy.typing as npt
 from scipy import signal, special
+
+from .window import Window
 
 
 # Index for version of
@@ -28,9 +30,6 @@ class EventSeries:
         :param constraints: List of objects inheriting from ConstraintsBaseClass
             See classes in eventwarping.Constraints
         """
-        if window % 2 == 0:
-            raise ValueError(f"Argument window should be an uneven number.")
-
         self.series: Optional[npt.NDArray[np.int]] = None  # shape = (nb_series, nb_events, nb_symbols)
         self.intonly = intonly
         self.symbol2int = dict()
@@ -38,7 +37,7 @@ class EventSeries:
         self.nb_series = 0
         self.nb_events = 0  # length of series (of sets)
         self.nb_symbols = 0  # maximal size of set that represents an event
-        self.window = window
+        self.window = Window.wrap(window)
         self.count_thr = 5  # expected minimal number of events
         self.rescale_power = 1  # Raise counts to this power and rescale
         self.rescale_weights = dict()  # Symbol idx to weight factor
@@ -52,6 +51,10 @@ class EventSeries:
         self._zero_crossings = None
         self._warped_series: Optional[npt.NDArray[np.int]] = None
         self._warped_series_ec: Optional[npt.NDArray[np.int]] = None  # Event counts
+        self._converged = None
+        self.model = None
+        self._loglikelihoods_p = None
+        self._loglikelihoods_n = None
         self._versions = [0, 0, 0, 0]  # V_WC, V_RC, V_WD, V_WS
         self.constraints = constraints
         if self.constraints is not None:
@@ -64,6 +67,7 @@ class EventSeries:
         self._warping_directions = None
         self._warped_series = None
         self._warped_series_ec = None
+        self._converged = None
         self._versions = [0, 0, 0, 0]
 
     def series_changed(self):
@@ -72,30 +76,48 @@ class EventSeries:
             for constraint in self.constraints:
                 constraint.es = self
 
-    def warp(self, iterations=1, restart=False, plot=None):
+    def warp(self, iterations=10, restart=False, plot=None):
         for _ in self.warp_yield(iterations=iterations, restart=restart, plot=plot):
             pass
         return self.warped_series
 
-    def warp_yield(self, iterations=1, restart=False, plot=None):
+    def warp_yield(self, iterations=10, restart=False, plot=None):
         if plot is not None:
             import matplotlib.pyplot as plt
+        else:
+            plt = None
         if restart:
             self.reset()
         for it in range(iterations):
+            if self._converged is not None:
+                break
             self.compute_windowed_counts()
             self.compute_rescaled_counts()
             self.compute_warping_directions()
             if plot is not None:
                 fig, axs = self.plot_directions(symbol=plot.get("symbol", None),
                                                 seriesidx=plot.get("seriesidx", None))
-                fig.savefig(plot['filename'].format(it=it), bbox_inches='tight')
+                fig.savefig(plot['filename'].format(iteration=it, it=it), bbox_inches='tight')
                 plt.close(fig)
             self.compute_warped_series()
             yield self.warped_series
 
+    def warp_with_model(self, model: 'EventSeries' = None, iterations=10):
+        """Warp this EventSeries based on the gradients in the given model."""
+        if model is None:
+            model = self.model
+        self._warped_series, _, self._converged = model.align_series_times(self.warped_series, iterations=iterations)
+        self._versions[V_WS] += iterations if self._converged is None else self._converged
+
+    @property
+    def converged_str(self):
+        if self._converged is None:
+            return f"Warping did not yet converge after {self._versions[V_WS]} iterations."
+        return f"Warping converged after {self._converged+1} iterations."
+
     @classmethod
-    def from_setlistfile(cls, fn, window, intonly=False, constraints=None, max_series_length=None):
+    def from_setlistfile(cls, fn, window, intonly=False, constraints=None, max_series_length=None,
+                         model: 'EventSeries' = None):
         """Read a setlist file and create an eventwarping object.
         A file where each line is a list of sets of symbols (using Python syntax).
         Each set represents a time point.
@@ -104,6 +126,8 @@ class EventSeries:
         :param window: See EventWarping
         :param intonly: See EventWarping
         :param constraints: See EventWarping
+        :param max_series_length:
+        :param model: Use dictionary from the given EventWarping object
         :return: EventWarping object
         """
         import ast
@@ -113,11 +137,11 @@ class EventSeries:
         with fn.open("r") as fp:
             for line in fp.readlines():
                 data.append(ast.literal_eval(line))
-        return cls.from_setlist(data, window, intonly, constraints, max_series_length)
+        return cls.from_setlist(data, window, intonly, constraints, max_series_length, model=model)
 
     @classmethod
     def from_setlistfiles(cls, fns, window, intonly=False, selected=None,
-                          constraints=None, max_series_length=None):
+                          constraints=None, max_series_length=None, model: 'EventSeries' = None):
         """Read a list of setlist file and create an eventwarping object.
         A file where each line is a list of sets of symbols (using Python syntax).
         Each set represents a time point.
@@ -128,6 +152,7 @@ class EventSeries:
         :param selected: Boolean list. Only use the i-th series if selected[i] is True
         :param constraints: See EventWarping
         :param max_series_length: See from_setlist
+        :param model:
         :return: EventWarping object
         """
         import ast
@@ -142,39 +167,46 @@ class EventSeries:
                         data_line = ast.literal_eval(line)
                         data.append(data_line)
                     i += 1
-        return cls.from_setlist(data, window, intonly, constraints, max_series_length)
+        return cls.from_setlist(data, window, intonly, constraints, max_series_length, model=model)
 
     @classmethod
-    def from_setlist(cls, sl, window, intonly=False, constraints=None, max_series_length=None):
-        """Convert a setlist (a Python list of sets of symbols) to an eventwarping object.
+    def from_setlist(cls, sl, window=None, intonly=False, constraints=None, max_series_length=None,
+                     model: 'EventSeries' = None):
+        """Convert a setlist (a Python list of lists of sets of symbols) to an eventwarping object.
 
-        :param sl: List of sets of symbols
+        :param sl: List of lists of sets of symbols
         :param window: See EventWarping
         :param intonly: See EventWarping
         :param constraints: See EventWarping
         :param max_series_length: Length of each series (i.e. #itemsets) is truncated to this size
+        :param model: Parse based on given EventSeries object
         :return: EventWarping object
         """
+        if window is None:
+            if model is None:
+                raise ValueError(f"window argument cannot be None if model is None")
+            window = model.window
         es = EventSeries(window=window, intonly=intonly, constraints=constraints)
         es.nb_symbols = 0
         es.nb_events = 0
         es.nb_series = len(sl)
+        if model is not None:
+            es.model = model
+            es.nb_symbols = model.nb_symbols
+            es.nb_events = model.nb_events
+            es.symbol2int = model.symbol2int
+            es.int2symbol = model.int2symbol
         for series in sl:
             if len(series) > es.nb_events:
-                es.nb_events = len(series)
+                if es.model is None:
+                    es.nb_events = len(series)
+                else:
+                    raise ValueError(f"setlist is not compatible with the model: "
+                                     f"nb_events={len(series)} >= {es.nb_events}")
             for event in series:
                 for symbol in event:
-                    if intonly:
-                        if type(symbol) is not int:
-                            raise ValueError(f"Symbol is not an int: {symbol}")
-                        if symbol >= es.nb_symbols:
-                            es.nb_symbols = symbol + 1
-                    else:
-                        if symbol not in es.symbol2int:
-                            es.symbol2int[symbol] = es.nb_symbols
-                            es.int2symbol[es.nb_symbols] = symbol
-                            es.nb_symbols += 1
-        if max_series_length:
+                    EventSeries.parse_symbol(symbol, es, intonly)
+        if max_series_length and es.model is None:
             es.nb_events = min(es.nb_events, max_series_length)
         es.series = np.zeros((es.nb_series, es.nb_events, es.nb_symbols), dtype=int)
         for sei, series in enumerate(sl):
@@ -186,10 +218,43 @@ class EventSeries:
         es.series_changed()
         return es
 
+    @staticmethod
+    def parse_symbol(symbol, es, intonly):
+        if intonly:
+            if type(symbol) is not int:
+                raise ValueError(f"Symbol is not int: {symbol}")
+            if symbol >= es.nb_symbols:
+                if es.model is None:
+                    es.nb_symbols = symbol + 1
+                else:
+                    raise ValueError(
+                        f"String is not compatible with the model: "
+                        f"nb_events >= {es.nb_events}")
+        else:
+            if symbol not in es.symbol2int:
+                if es.model is not None:
+                    raise ValueError(
+                        f"String is not compatible with the model: "
+                        f"unknown symbol {symbol}")
+                es.symbol2int[symbol] = es.nb_symbols
+                es.int2symbol[es.nb_symbols] = symbol
+                es.nb_symbols += 1
+
     @classmethod
-    def from_filepointer(cls, fp, window, intonly=False, constraints=None, max_series_length=None):
+    def from_filepointer(cls, fp, window=None, intonly=False, constraints=None, max_series_length=None,
+                         model: 'EventSeries' = None):
         """See from_file."""
+        if window is None:
+            if model is None:
+                raise ValueError(f"window argument cannot be None if model is None")
+            window = model.window
         es = EventSeries(window, intonly=intonly, constraints=constraints)
+        if model is not None:
+            es.model = model
+            es.nb_symbols = model.nb_symbols
+            es.nb_events = model.nb_events
+            es.int2symbol = model.int2symbol
+            es.symbol2int = model.symbol2int
         allseries = list()
         for line in fp.readlines():
             series = []
@@ -198,22 +263,17 @@ class EventSeries:
                 events = events.strip()
                 if events != "":
                     events = [e.strip() for e in events.strip().split(" ") if e.strip() != ""]
-                    for event in events:
-                        if intonly:
-                            if type(event) is not int:
-                                raise ValueError(f"Symbol is not int: {event}")
-                            if event >= es.nb_symbols:
-                                es.nb_symbols = event + 1
-                        else:
-                            if event not in es.symbol2int:
-                                es.symbol2int[event] = es.nb_symbols
-                                es.int2symbol[es.nb_symbols] = event
-                                es.nb_symbols += 1
+                    for symbol in events:
+                        EventSeries.parse_symbol(symbol, es, intonly)
                 series.append(events)
             if len(series) > es.nb_events:
-                es.nb_events = len(series)
+                if es.model is None:
+                    es.nb_events = len(series)
+                else:
+                    raise ValueError(f"String is not compatible with model: "
+                                     f"nb_events={len(series)} >= {es.nb_events}")
             allseries.append(series)
-        if max_series_length:
+        if max_series_length and es.model is None:
             es.nb_events = min(es.nb_events, max_series_length)
         es.series = np.zeros((es.nb_series, es.nb_events, es.nb_symbols), dtype=int)
         for sei, series in enumerate(allseries):
@@ -225,7 +285,8 @@ class EventSeries:
         return es
 
     @classmethod
-    def from_file(cls, fn, window, intonly=False, constraints=None, max_series_length=None):
+    def from_file(cls, fn, window, intonly=False, constraints=None, max_series_length=None,
+                  model: 'EventSeries' = None):
         """Convert a simple formatted file to an EventWarping object.
 
         The format is:
@@ -243,18 +304,20 @@ class EventSeries:
         :param intonly: See EventWarping
         :param constraints: See EventWarping
         :param max_series_length: Length of each series (i.e. #itemsets) is truncated to this size
+        :param model: Parse based on an existing EventWarping object
+            (this uses the already existing symbol dictionary)
         :return: EventWarping object
         """
-        es = None
         with fn.open("r") as fp:
-            es = cls.from_filepointer(fp, window, intonly, constraints, max_series_length)
+            es = cls.from_filepointer(fp, window, intonly, constraints, max_series_length, model=model)
         return es
 
     @classmethod
-    def from_string(cls, string, window, intonly=False, constraints=None, max_series_length=None):
+    def from_string(cls, string, window=None, intonly=False, constraints=None, max_series_length=None, model=None):
+        """See from_file."""
         import io
         fp = io.StringIO(string)
-        es = cls.from_filepointer(fp, window, intonly, constraints, max_series_length)
+        es = cls.from_filepointer(fp, window, intonly, constraints, max_series_length, model)
         return es
 
     def copy(self, filter_symbols=None):
@@ -298,7 +361,7 @@ class EventSeries:
             ws[:, (1+nb_spacers)*i, :] = self._warped_series[:, i, :]
         self.series = ws
         self.nb_events = new_nb_events
-        self.window = ((self.window // 2) + nb_spacers)*2 + 1
+        self.window.insert_spacers(nb_spacers)
         self.reset()
 
     def get_counts(self, ignore_merged=False, filter_symbols=None):
@@ -347,6 +410,7 @@ class EventSeries:
         """
         if self._warped_series is None:
             self._warped_series = self.series
+        window = self.window.counting(self._versions[V_WC])
         # Only count occurrence of a symbol in a series once, even though
         # we keep track of how many are merged but this information should not be used for counts
         ws = np.sign(self._warped_series)
@@ -359,22 +423,25 @@ class EventSeries:
         self._factors = 1 - np.log2(np.divide(1, ws_sum)) / max_entropy
         self._factors[np.isinf(self._factors)] = 1
         ws = ws * self._factors[:, np.newaxis, :]
+        c = ws.sum(axis=0)
 
         # Sliding window to aggregate from neighbours
-        sides = int((self.window - 1) / 2)
-        wc = np.zeros((self.nb_symbols, self.nb_events))
-        # w = np.lib.stride_tricks.sliding_window_view(ws, (self.nb_series, self.window), (0, 1))
-        # wc[:, sides:-sides] = w.sum(axis=(-2, -1))[0].T
-        c = ws.sum(axis=0)
-        w = np.lib.stride_tricks.sliding_window_view(c, (self.window,), axis=(0,))
-        wc[:, sides:-sides] = w.sum(axis=2).T
-        # Pad the beginning and ending with the same values (having half a window can lower the count)
-        wc[:, :sides] = wc[:, sides:sides+1]
-        wc[:, -sides:] = wc[:, -sides-1:-sides]
-        # Add without a window (otherwise the begin and end cannot differentiate)
-        # c = ws.sum(axis=0).T
-        self._windowed_counts = np.add(wc, c.T) / 2
-        # self._windowed_counts = wc
+        if window > 1:
+            sides = int((window - 1) / 2)
+            wc = np.zeros((self.nb_symbols, self.nb_events))
+            # w = np.lib.stride_tricks.sliding_window_view(ws, (self.nb_series, window), (0, 1))
+            # wc[:, sides:-sides] = w.sum(axis=(-2, -1))[0].T
+            w = np.lib.stride_tricks.sliding_window_view(c, (window,), axis=(0,))
+            wc[:, sides:-sides] = w.sum(axis=2).T
+            # Pad the beginning and ending with the same values (having half a window can lower the count)
+            wc[:, :sides] = wc[:, sides:sides+1]
+            wc[:, -sides:] = wc[:, -sides-1:-sides]
+            # Add without a window (otherwise the begin and end cannot differentiate)
+            # c = ws.sum(axis=0).T
+            self._windowed_counts = np.add(wc, c.T) / 2
+            # self._windowed_counts = wc
+        else:
+            self._windowed_counts = c.T
 
         self._versions[V_WC] += 1
         return self._windowed_counts
@@ -429,6 +496,22 @@ class EventSeries:
             return self._rescaled_counts
         return self.compute_rescaled_counts()
 
+    def update_gradients_without_warping(self, window=None, plot=None):
+        """Recompute the gradients, possibly with a different window, without changing the series."""
+        if plot is not None:
+            import matplotlib.pyplot as plt
+        else:
+            plt = None
+        if window is not None:
+            self.window = window
+        self.compute_warping_directions()
+        self._versions[V_WS] += 1  # Do not change warping
+        if plot is not None:
+            fig, axs = self.plot_directions(symbol=plot.get("symbol", None),
+                                            seriesidx=plot.get("seriesidx", None))
+            fig.savefig(plot['filename'], bbox_inches='tight')
+            plt.close(fig)
+
     def compute_warping_directions(self):
         """
         Directions in which each series time point should change.
@@ -449,11 +532,12 @@ class EventSeries:
         # If windowed_counts has not yet been recomputed, do so
         if self._versions[V_WD] == self._versions[V_RC]:
             self.compute_rescaled_counts()
+        window = self.window.smoothing(self._versions[V_WD])
 
         # Setup up kernel
         # Smooth window to double its size, a window on each side of the window
         # (but make sure it is uneven to be centered)
-        kernel_side = self.window // 2
+        kernel_side = window // 2
         kernel_width = int(kernel_side * 2 + 1)
         kernel = signal.windows.hann(kernel_width)  # make sure to be uneven to be centered
         # kernel = np.vstack([kernel] * 2)  # kernel per symbol
@@ -563,7 +647,8 @@ class EventSeries:
         # entr = - np.sum(np.multiply(dens, np.log2(dens)), axis=1)
         return 1 - entr / max_entropy
 
-    def _best_warped_path(self, cc, ps=None):
+    @staticmethod
+    def _best_warped_path(cc, ps=None):
         """
 
         :param cc: Cumulative Cost matrix
@@ -637,8 +722,34 @@ class EventSeries:
         if self._warped_series_ec is None:
             self._warped_series_ec = self._warped_series.max(axis=2)
 
-        ws = np.zeros((self.nb_series, self.nb_events, self.nb_symbols), dtype=int)
-        wsec = np.zeros((self.nb_series, self.nb_events), dtype=int)
+        assert self._warped_series.shape[0] == self.nb_series
+        ws, wsec, converged = self.align_series(self._warped_series, self._warped_series_ec)
+
+        self._converged = None if converged is False else self._versions[V_WS]
+        self._warped_series = ws
+        self._warped_series_ec = wsec
+        self._versions[V_WS] += 1
+        return self._warped_series
+
+    def align_series(self, series, series_ec=None):
+        """Align events in the given series based on the previously computed gradients.
+
+        This method can be used to align new data to the originally given data. Assuming
+        that warping has been applied to that originally given data.
+
+        :param series: Series is an array with dimensions (series, event, symbol)
+        :param series_ec: For every event, of how many merges this event is constructed.
+            Dimensions are (series, nb of events)
+        """
+        if series_ec is None:
+            series_ec = series.max(axis=2)
+        assert series.shape[1] == self.nb_events, f"Expected series of length {series.shape[1]}, got {self.nb_events}"
+        assert series.shape[2] == self.nb_symbols
+        nb_series = series.shape[0]
+        converged = True
+
+        ws = np.zeros((nb_series, self.nb_events, self.nb_symbols), dtype=int)
+        wsec = np.zeros((nb_series, self.nb_events), dtype=int)
 
         # compute constraints
         # if self.constraints is not None:
@@ -653,10 +764,10 @@ class EventSeries:
         sce = np.zeros((self.nb_events, 3), dtype=int)  # summed counts events
 
         # Aggregated directions and inertia
-        wss_all = np.einsum('kji,ij->kj', self.warped_series, self.warping_directions)
-        wsi_all = np.einsum('kji,ij->kj', self.warped_series, self._warping_inertia)
+        wss_all = np.einsum('kji,ij->kj', series, self.warping_directions)
+        wsi_all = np.einsum('kji,ij->kj', series, self._warping_inertia)
 
-        for sei in range(self.nb_series):
+        for sei in range(nb_series):
             wss = wss_all[sei]
             wsi = wsi_all[sei]
 
@@ -672,10 +783,10 @@ class EventSeries:
             cc[0, 2] = -wss[0]
             ps[0, :] = [0, 1, 2]
             scs[0, 0, :] = 0
-            scs[0, 1, :] = self._warped_series[sei, 0, :]
+            scs[0, 1, :] = series[sei, 0, :]
             scs[0, 2, :] = scs[0, 1, :]
             sce[0, 0] = 0
-            sce[0, 1] = self._warped_series_ec[sei, 0]
+            sce[0, 1] = series_ec[sei, 0]
             sce[0, 2] = sce[0, 1]
             for i in range(1, len(wss)):
                 # Backward
@@ -689,13 +800,13 @@ class EventSeries:
                     if not cc[i - 1, prevs] < cc[i, 0]:
                         continue
                     if prevs == 1:
-                        merged_cnts_s = scs[i-1, prevs] + self._warped_series[sei, i, :]
-                        merged_cnts_e = sce[i-1, prevs] + self._warped_series_ec[sei, i]
-                        args = scs[i-1, prevs], self._warped_series[sei, i, :]
+                        merged_cnts_s = scs[i-1, prevs] + series[sei, i, :]
+                        merged_cnts_e = sce[i-1, prevs] + series_ec[sei, i]
+                        args = scs[i-1, prevs], series[sei, i, :]
                     else:
-                        merged_cnts_s = self._warped_series[sei, i, :]
-                        merged_cnts_e = self._warped_series_ec[sei, i]
-                        args = None, self._warped_series[sei, i, :]
+                        merged_cnts_s = series[sei, i, :]
+                        merged_cnts_e = series_ec[sei, i]
+                        args = None, series[sei, i, :]
                     if self._allow_merge(merged_cnts_s, merged_cnts_e, *args):
                         cc[i, 0] = cc[i - 1, prevs]
                         ps[i, 0] = prevs
@@ -714,13 +825,13 @@ class EventSeries:
                     if not cc[i - 1, prevs] < cc[i, 1]:
                         continue
                     if prevs == 2:
-                        merged_cnts_s = scs[i - 1, prevs] + self._warped_series[sei, i, :]
-                        merged_cnts_e = sce[i - 1, prevs] + self._warped_series_ec[sei, i]
-                        args = scs[i - 1, prevs], self._warped_series[sei, i, :]
+                        merged_cnts_s = scs[i - 1, prevs] + series[sei, i, :]
+                        merged_cnts_e = sce[i - 1, prevs] + series_ec[sei, i]
+                        args = scs[i - 1, prevs], series[sei, i, :]
                     else:
-                        merged_cnts_s = self._warped_series[sei, i, :]
-                        merged_cnts_e = self._warped_series_ec[sei, i]
-                        args = None, self._warped_series[sei, i, :]
+                        merged_cnts_s = series[sei, i, :]
+                        merged_cnts_e = series_ec[sei, i]
+                        args = None, series[sei, i, :]
                     if self._allow_merge(merged_cnts_s, merged_cnts_e, *args):
                         cc[i, 1] = cc[i - 1, prevs]
                         ps[i, 1] = prevs
@@ -739,8 +850,8 @@ class EventSeries:
                     if cc[i - 1, prevs] < cc[i, 2]:
                         cc[i, 2] = cc[i - 1, prevs]
                         ps[i, 2] = prevs
-                        scs[i, 2] = self._warped_series[sei, i, :]
-                        sce[i, 2] = self._warped_series_ec[sei, i]
+                        scs[i, 2] = series[sei, i, :]
+                        sce[i, 2] = series_ec[sei, i]
                 cc[i, 2] += -wss[i]
             cc[len(wss) - 1, 2] = np.inf  # Last element cannot move forward
             path = self._best_warped_path(cc, ps)
@@ -750,13 +861,31 @@ class EventSeries:
 
             # Do realignment
             for i_from, i_to in path:
-                ws[sei, i_to, :] = ws[sei, i_to, :] + self._warped_series[sei, i_from, :]
-                wsec[sei, i_to] = wsec[sei, i_to] + self._warped_series_ec[sei, i_from]
+                if converged is True and i_to != i_from:
+                    converged = False
+                ws[sei, i_to, :] = ws[sei, i_to, :] + series[sei, i_from, :]
+                wsec[sei, i_to] = wsec[sei, i_to] + series_ec[sei, i_from]
 
-        self._warped_series = ws
-        self._warped_series_ec = wsec
-        self._versions[V_WS] += 1
-        return self._warped_series
+        return ws, wsec, converged
+
+    def align_series_times(self, series, series_ec=None, iterations=1):
+        """Align events in the given series based on the previously computed gradients.
+
+        This method can be used to align new data to the originally given data. Assuming
+        that warping has been applied to that originally given data.
+
+        See align_series for more informatin.
+        """
+        converged = None
+        for idx in range(iterations):
+            series, series_ec, converged = self.align_series(series, series_ec)
+            if converged is True:
+                converged = idx
+                # print(f"Stopped after {converged=}")
+                break
+            else:
+                converged = None
+        return series, series_ec, converged
 
     @property
     def warped_series(self):
@@ -764,6 +893,52 @@ class EventSeries:
             return self._warped_series
         self._warped_series = self.series
         return self._warped_series
+
+    def compute_likelihoods(self, laplace_smoothing=1):
+        """Compute all the p(s_{i,j}|e_i).
+        """
+        # self._likelihoods = np.divide(self._warped_series.sum(axis=0), self.nb_series)
+        self._loglikelihoods_p = np.divide(np.add(self._warped_series.sum(axis=0), laplace_smoothing),
+                                           self.nb_series + 2*laplace_smoothing)
+        self._loglikelihoods_n = np.log(1.0 - self._loglikelihoods_p)
+        self._loglikelihoods_p = np.log(self._loglikelihoods_p)
+
+    def likelihood_with_model(self):
+        """Compute likelihood of this EventSeries given the stored model."""
+        if self.model is None:
+            raise ValueError(f"This EventSeries has no associated model, use the 'likelihood' method.")
+        return self.likelihood(self.model)
+
+    def likelihood(self, model: 'EventSeries' = None):
+        """Likelihood of the current eventseries given the 'model' eventseries.
+
+        LL = p(x|M) = prod_i p(x_i|e_i)p(e_i|M) = prod_i p(x_i|e_i)
+        with i the event index
+        All transitions and thus events are equally likely (this ignored).
+
+        x is a set of symbols that can appear:
+        p(x_i | e_i) = prod_j p(s_{i,j} | e_i)
+        with j the symbol index
+
+        LL = prod_{i,j} p(s_{i,j}|e_i)
+        LLL = sum_{i,j} log(p(s_{i,j}|e_i))
+
+        The intuition is that this is Naive Bayes for an event. What is the probability
+        that it is the event at time i given the set of observations.
+        Thus p(e_i | S) ~= prod_j p(s_j | e_i)
+
+        :param model: EventSeries representing the model, this eventseries if None
+        :return: Log Likelihood
+        """
+        if model is None:
+            model = self
+        if model._loglikelihoods_p is None or model._loglikelihoods_n is None:
+            model.compute_likelihoods()
+        # TODO: check what's faster, this multiplies a lot of zeros, and requires np.sign
+        ws = np.sign(self._warped_series)
+        lll = np.einsum('ijk,jk->i',  ws, model._loglikelihoods_p)
+        lll += np.einsum('ijk,jk->i',  1-ws, model._loglikelihoods_n)
+        return lll
 
     def print_series(self):
         print(self.series)
@@ -782,13 +957,13 @@ class EventSeries:
         if self.intonly:
             sl = math.floor(math.log(self.nb_symbols - 1, 10)) + 1 + 1
 
-            def fmt_symbol(syi):
-                return f"{syi:>{sl}}"
+            def fmt_symbol(sy_i):
+                return f"{sy_i:>{sl}}"
         else:
             sl = max(len(str(k)) for k in self.symbol2int.keys()) + 1
 
-            def fmt_symbol(syi):
-                return f"{self.int2symbol[syi]:>{sl}}"
+            def fmt_symbol(sy_i):
+                return f"{self.int2symbol[sy_i]:>{sl}}"
         empty = " " * sl
         s = ''
         for sei in range(self.nb_series):
@@ -815,13 +990,13 @@ class EventSeries:
         import matplotlib.pyplot as plt
         if type(symbol) is int:
             symbol = [symbol]
-        elif type(symbol) is not list and isinstance(symbol, collections.abc.Iterable):
+        elif type(symbol) is not list and isinstance(symbol, Iterable):
             symbol = list(symbol)
         elif symbol is None:
             symbol = []
         if type(seriesidx) is int:
             seriesidx = [seriesidx]
-        elif type(seriesidx) is not list and isinstance(seriesidx, collections.abc.Iterable):
+        elif type(seriesidx) is not list and isinstance(seriesidx, Iterable):
             seriesidx = list(seriesidx)
         elif seriesidx is None:
             seriesidx = []
@@ -900,9 +1075,9 @@ class EventSeries:
         """Plot the counts of all symbols over all events (aggregated over the series).
 
         :param filename: Plot directly to a file
+        :param filter_symbols:
         :returns: fig, axs if filename is not given
         """
-        import matplotlib as mpl
         import matplotlib.pyplot as plt
         fig, axs = plt.subplots(nrows=1, ncols=2, figsize=(10, 8))
 
