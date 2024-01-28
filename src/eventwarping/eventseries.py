@@ -88,9 +88,16 @@ class EventSeries:
             plt = None
         if restart:
             self.reset()
-        for it in range(iterations):
-            if self._converged is not None:
-                break
+        it = 0
+        max_iterations = iterations
+        while it <= max_iterations:
+            if self._converged is not None or it == max_iterations:
+                if self.window.next_window():
+                    iterations = max_iterations
+                    max_iterations += iterations
+                    self.isconverged = False
+                else:
+                    break
             self.compute_windowed_counts()
             self.compute_rescaled_counts()
             self.compute_warping_directions()
@@ -101,6 +108,7 @@ class EventSeries:
                 plt.close(fig)
             self.compute_warped_series()
             yield self.warped_series
+            it += 1
 
     def warp_with_model(self, model: 'EventSeries' = None, iterations=10):
         """Warp this EventSeries based on the gradients in the given model."""
@@ -425,6 +433,7 @@ class EventSeries:
         if self._warped_series is None:
             self._warped_series = self.series
         window = self.window.counting(self._versions[V_WC])
+        print(f"{window=} for {self._versions[V_WC]}")
         # Only count occurrence of a symbol in a series once, even though
         # we keep track of how many are merged but this information should not be used for counts
         ws = np.sign(self._warped_series)

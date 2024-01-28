@@ -22,6 +22,18 @@ class Window(ABC):
         self._count_window = count_window
         self._smooth_window = smooth_window
 
+    @staticmethod
+    def _check_uneven(window, name):
+        if type(window) is list:
+            for w in window:
+                Window._check_uneven(w, name+".item")
+        elif type(window) is int:
+            if window % 2 == 0:
+                raise ValueError(f"Argument {name} should be an uneven number, got {window} ({type(window)}).")
+        else:
+            raise ValueError(f"Argument {name} should be an integer, got {window} ({type(window)})")
+
+
     @abc.abstractmethod
     def counting(self, item):
         """Window to use for counting.
@@ -47,6 +59,9 @@ class Window(ABC):
         :param nb_spacers: Number of spacers
         """
         pass
+
+    def next_window(self):
+        return False
 
     def __str__(self):
         return f"Window({self._count_window}, {self._smooth_window})"
@@ -75,13 +90,6 @@ class StaticWindow(Window):
             self._check_uneven(smooth_window, 'smooth_window')
         super().__init__(count_window, smooth_window)
 
-    @staticmethod
-    def _check_uneven(window, name):
-        if type(window) is not int:
-            raise ValueError(f"Argument {name} should be an integer (got {type(window)})")
-        if window % 2 == 0:
-            raise ValueError(f"Argument {name} should be an uneven number (got {window}).")
-
     def counting(self, item):
         """Window to use for counting.
 
@@ -108,6 +116,64 @@ class StaticWindow(Window):
 
     def __str__(self):
         return f"StaticWindow({self._count_window}, {self._smooth_window})"
+
+
+class MultipleWindow(Window):
+    def __init__(self, count_window: List[int], smooth_window=None, delay=None):
+        """Change the window size over time according to the given list.
+
+        The current iteration is the list index used (or the max index).
+        If delay is given an integer, the value in the given list is reused `delay` times.
+        If delay is given a string 'convergence', the list index is the
+        number of times convergence or the number of iterations is reached. In this case,
+        the method does `len(count_window)*iterations` warping steps instead of `iterations`.
+
+        :param count_window: List of count windows
+        :param smooth_window: List of smoothing windows
+        :param delay: Integer or 'convergence'
+        """
+        MultipleWindow._check_uneven(count_window, "count_window")
+        if smooth_window is None:
+            smooth_window = count_window
+        else:
+            MultipleWindow._check_uneven(smooth_window, "smooth_window")
+        assert len(count_window) == len(smooth_window)
+        super().__init__(count_window, smooth_window)
+        self.delay = delay
+        if type(self.delay) == str and self.delay != "convergence":
+            raise AttributeError(f"Unknown delay type: {self.delay}")
+        self.nb_convergences = 0
+
+    def counting(self, item):
+        if type(self.delay) is int:
+            item = item // self.delay
+        elif self.delay == "convergence":
+            item = self.nb_convergences
+        if item >= len(self._count_window):
+            item = len(self._count_window) - 1
+        return self._count_window.__getitem__(item)
+
+    def smoothing(self, item):
+        if type(self.delay) is int:
+            item = item // self.delay
+        elif self.delay == "convergence":
+            item = self.nb_convergences
+        if item >= len(self._smooth_window):
+            item = len(self._smooth_window) - 1
+        return self._smooth_window.__getitem__(item)
+
+    def insert_spacers(self, nb_spacers):
+        self._count_window = [((w // 2) + nb_spacers)*2 + 1 for w in self._count_window]
+        self._smooth_window = [((w // 2) + nb_spacers) * 2 + 1 for w in self._smooth_window]
+
+    def next_window(self):
+        if self.delay == "convergence":
+            self.nb_convergences += 1
+            if self.nb_convergences == len(self._count_window):
+                return False
+            return True
+        return False
+
 
 
 @dataclass

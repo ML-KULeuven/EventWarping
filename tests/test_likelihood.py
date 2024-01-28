@@ -7,7 +7,7 @@ import os
 
 from eventwarping.eventseries import EventSeries
 from eventwarping.constraints import *
-from eventwarping.window import LinearScalingWindow, StaticWindow
+from eventwarping.window import LinearScalingWindow, StaticWindow, MultipleWindow
 
 
 # If environment variable TESTDIR is set, save figures to this
@@ -23,12 +23,18 @@ def test_likelihood7():
          |   A | B   |     |     |   A |     |
 
     """
-    use_scaling_window = True
+    # window_type = "static"
+    # window_type = "linear"
+    window_type = "multiple"
     fn = Path(__file__).parent / "rsrc" / "example7.txt"
-    if use_scaling_window:
-        es = EventSeries.from_file(fn, window=LinearScalingWindow(5), constraints=[MaxMergeEventConstraint(1)])
-    else:
-        es = EventSeries.from_file(fn, window=5, constraints=[MaxMergeEventConstraint(1)])
+    window = 5
+    if window_type == "linear":
+        window = LinearScalingWindow(5)
+    elif window_type == "static":
+        window = 5
+    elif window_type == "multiple":
+        window = MultipleWindow([5, 1], [5, 5], delay="convergence")
+    es = EventSeries.from_file(fn, window=window, constraints=[MaxMergeEventConstraint(1)])
     # print('Original:\n{es.format_warped_series()}')
 
     nb_iterations = 3
@@ -36,7 +42,7 @@ def test_likelihood7():
     # plot = None
     es.warp(iterations=nb_iterations, plot=plot)
 
-    if not use_scaling_window:
+    if window_type == "static":
         # Do one additional iteration to update the gradients with a different window
         plot = {'filename': str(directory / f'gradients_{nb_iterations}.png'), 'symbol': {0, 1}}
         es.update_gradients_without_warping(window=StaticWindow(1, 5), plot=plot)
@@ -56,4 +62,8 @@ def test_likelihood7():
     es.compute_likelihoods(laplace_smoothing=0.1)
     llls = new_es.likelihood_with_model()
     for idx, lll in enumerate(llls):
-        print(f'Likelihood[{idx}] = exp({lll:6.2f}) = {np.exp(lll):.5f}')
+        print(f'Likelihood[{idx}] = exp({lll:6.4f}) = {np.exp(lll):.5f}')
+
+    llls_sol = [-1.6764, -1.6764, -2.3230, -6.4036, -8.5443, -11.9783]
+    for lll, lll_sol in zip(llls, llls_sol):
+        assert lll == pytest.approx(lll_sol, 4)
