@@ -7,7 +7,7 @@ import os
 
 from eventwarping.eventseries import EventSeries
 from eventwarping.constraints import *
-from eventwarping.window import StaticWindow, LinearScalingWindow
+from eventwarping.window import StaticWindow, MultipleWindow
 
 
 # If environment variable TESTDIR is set, save figures to this
@@ -269,21 +269,24 @@ def test_example11():
             "PTSPSLS",
             "SDLFPTSTSLS"]
 
-    window = StaticWindow(3, 11)
+    # window = StaticWindow(3, 11)
+    window = MultipleWindow([5, 1], [13, 5], delay="convergence")
     # window = LinearScalingWindow(11, 2)
     es = EventSeries.from_chararrays(data, window=window, constraints=[MaxMergeEventConstraint(1)])
-    es.insert_spacers(1)
+    es.insert_spacers(1, update_window=False)
     plot = {'filename': str(directory / 'gradients_{iteration}.png'),
             'symbol': {'S', 'L', 'P'}, 'seriesidx': (0, 1, 2)} if doplots else None
     es.warp(iterations=20, plot=plot)
     print(f"\nDone warping. {es.converged_str}")
+    # es.isconverged = False
+    # es.warp(iterations=20, window=StaticWindow(1, 5))
     print(es.format_warped_series(compact=True, drop_empty=False, drop_separators=True))
-    plot = {'filename': str(directory / 'gradients_20.png'),
-            'symbol': {'S', 'L', 'P'}, 'seriesidx': (0, 1, 2)} if doplots else None
-    es.isconverged = False
-    es.window = StaticWindow(1, 5)
-    es.warp(iterations=1, plot=plot)
-    print(es.format_warped_series(compact=True, drop_empty=False, drop_separators=True))
+    ws_res = es.format_warped_series(compact=True, drop_empty=True, drop_separators=True)
+    ws_sol = ["    PA SPSLS",
+              "SDLFPAST SLS",
+              "    P TSPSLS",
+              "SDLFP TSTSLS", ""]
+    assert ws_res == "\n".join(ws_sol)
 
 
 def test_example11b():

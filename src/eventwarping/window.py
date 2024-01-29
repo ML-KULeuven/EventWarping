@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 
 class Window(ABC):
-    def __init__(self, count_window, smooth_window = None):
+    def __init__(self, count_window, smooth_window=None):
         """Create a window that has a different size for the window for
         computing counts and for smoothing the counts.
 
@@ -32,7 +32,6 @@ class Window(ABC):
                 raise ValueError(f"Argument {name} should be an uneven number, got {window} ({type(window)}).")
         else:
             raise ValueError(f"Argument {name} should be an integer, got {window} ({type(window)})")
-
 
     @abc.abstractmethod
     def counting(self, item):
@@ -62,6 +61,9 @@ class Window(ABC):
 
     def next_window(self):
         return False
+
+    def __len__(self):
+        return 1
 
     def __str__(self):
         return f"Window({self._count_window}, {self._smooth_window})"
@@ -137,7 +139,7 @@ class MultipleWindow(Window):
             smooth_window = count_window
         else:
             MultipleWindow._check_uneven(smooth_window, "smooth_window")
-        assert len(count_window) == len(smooth_window)
+        # assert len(count_window) == len(smooth_window)
         super().__init__(count_window, smooth_window)
         self.delay = delay
         if type(self.delay) == str and self.delay != "convergence":
@@ -169,11 +171,13 @@ class MultipleWindow(Window):
     def next_window(self):
         if self.delay == "convergence":
             self.nb_convergences += 1
-            if self.nb_convergences == len(self._count_window):
+            if self.nb_convergences == self.__len__():
                 return False
             return True
         return False
 
+    def __len__(self):
+        return max(len(self._count_window), len(self._smooth_window))
 
 
 @dataclass
@@ -181,25 +185,9 @@ class ListRange:
     start: int
     stop: int
     step: int
-    delay: int
-    list: List[int] = field(init=False)
 
-    def __post_init__(self):
-        if self.start % 2 == 0:
-            raise ValueError(f"Argument start={self.start} should be an uneven number.")
-        if self.step % 2 != 0:
-            # Check that the step is even (to only have uneven values in the list)
-            raise ValueError(f"Argument step={self.step} should be an even number.")
-
-        self.list = list(range(self.start, self.stop, self.step))
-        if len(self.list) == 0:
-            raise ValueError(f"The range is empty: ({self.start},{self.stop},{self.step})")
-
-    def __getitem__(self, item):
-        item = item // self.delay
-        if item >= len(self.list):
-            item = len(self.list) - 1
-        return self.list.__getitem__(item)
+    def list(self):
+        return list(range(self.start, self.stop, self.step))
 
     def insert_spacers(self, nb_spacers):
         new_start = ((self.start // 2) + nb_spacers) * 2 + 1
@@ -211,10 +199,10 @@ class ListRange:
         if step % 2 != 0:
             # Make sure the step is even (to only have uneven values in the list)
             step += 1
-        return ListRange(start, self.stop, step, self.delay)
+        return ListRange(start, self.stop, step)
 
 
-class LinearScalingWindow(Window):
+class LinearScalingWindow(MultipleWindow):
     def __init__(self, start, stop=0, step=-2, delay=1):
         """Change the counting window size over time. By default, the smoothing
         window is constant and set to the start value. If you want to deviate,
@@ -228,10 +216,11 @@ class LinearScalingWindow(Window):
         start_c, start_s = self._parse_window(start, 'start')
         stop_c, stop_s = self._parse_window(stop, 'stop', default=start-1)
         step_c, step_s = self._parse_window(step, 'step')
-        delay_c, delay_s = self._parse_window(delay, 'delay')
 
-        super().__init__(ListRange(start_c, stop_c, step_c, delay_c),
-                         ListRange(start_s, stop_s, step_s, delay_s))
+        self._count_listrange = ListRange(start_c, stop_c, step_c)
+        self._smooth_listrange = ListRange(start_s, stop_s, step_s)
+
+        super().__init__(self._count_listrange.list(), self._smooth_listrange.list(), delay=delay)
 
     @staticmethod
     def _parse_window(value, name='window', default=None):
@@ -245,12 +234,9 @@ class LinearScalingWindow(Window):
             raise AttributeError(f"Unknown type for {name}: {value} ({type(value)})")
         return c, s
 
-    def counting(self, item):
-        return self._count_window.__getitem__(item)
-
-    def smoothing(self, item):
-        return self._smooth_window.__getitem__(item)
-
     def insert_spacers(self, nb_spacers):
-        self._count_window = self._count_window.insert_spacers(nb_spacers)
-        self._smooth_window = self._smooth_window.insert_spacers(nb_spacers)
+        self._count_listrange = self._count_listrange.insert_spacers(nb_spacers)
+        self._smooth_listrange = self._smooth_listrange.insert_spacers(nb_spacers)
+
+        self._count_window = self._count_listrange.list()
+        self._smooth_window = self._smooth_listrange.list()

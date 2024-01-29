@@ -76,27 +76,35 @@ class EventSeries:
             for constraint in self.constraints:
                 constraint.es = self
 
-    def warp(self, iterations=10, restart=False, plot=None):
-        for _ in self.warp_yield(iterations=iterations, restart=restart, plot=plot):
+    def warp(self, iterations=10, restart=False, plot=None, window=None):
+        for _ in self.warp_yield(iterations=iterations, restart=restart, plot=plot, window=window):
             pass
         return self.warped_series
 
-    def warp_yield(self, iterations=10, restart=False, plot=None):
+    def warp_yield(self, iterations=10, restart=False, plot=None, window=None):
         if plot is not None:
             import matplotlib.pyplot as plt
         else:
             plt = None
+        if window is not None:
+            self.window = window
         if restart:
             self.reset()
         it = 0
         max_iterations = iterations
+        iterations_until_converged = 0
         while it <= max_iterations:
             if self._converged is not None or it == max_iterations:
+                if self._converged is not None:
+                    iterations_until_converged += self._converged
+                else:
+                    iterations_until_converged += max_iterations
                 if self.window.next_window():
                     iterations = max_iterations
                     max_iterations += iterations
                     self.isconverged = False
                 else:
+                    self.isconverged = iterations_until_converged
                     break
             self.compute_windowed_counts()
             self.compute_rescaled_counts()
@@ -354,7 +362,7 @@ class EventSeries:
         es.series_changed()
         return es
 
-    def insert_spacers(self, nb_spacers):
+    def insert_spacers(self, nb_spacers, update_window=True):
         """Introduce empty events in between events.
 
         This can be used when using the MaxMergeEventConstraint(1), thus when no merging is allowed.
@@ -373,6 +381,7 @@ class EventSeries:
         Whereas otherwise, no realignment would be possible.
 
         :param nb_spacers: Number of empty events to insert between two events.
+        :param update_window:
         """
         if self._warped_series is None:
             self._warped_series = self.series
@@ -383,7 +392,8 @@ class EventSeries:
             ws[:, (1+nb_spacers)*i, :] = self._warped_series[:, i, :]
         self.series = ws
         self.nb_events = new_nb_events
-        self.window.insert_spacers(nb_spacers)
+        if update_window:
+            self.window.insert_spacers(nb_spacers)
         self.reset()
 
     def get_counts(self, ignore_merged=False, filter_symbols=None):
@@ -433,7 +443,6 @@ class EventSeries:
         if self._warped_series is None:
             self._warped_series = self.series
         window = self.window.counting(self._versions[V_WC])
-        print(f"{window=} for {self._versions[V_WC]}")
         # Only count occurrence of a symbol in a series once, even though
         # we keep track of how many are merged but this information should not be used for counts
         ws = np.sign(self._warped_series)

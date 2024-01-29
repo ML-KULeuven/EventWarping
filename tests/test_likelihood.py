@@ -24,8 +24,8 @@ def test_likelihood7():
 
     """
     # window_type = "static"
-    # window_type = "linear"
-    window_type = "multiple"
+    window_type = "linear"
+    # window_type = "multiple"
     fn = Path(__file__).parent / "rsrc" / "example7.txt"
     window = 5
     if window_type == "linear":
@@ -37,10 +37,11 @@ def test_likelihood7():
     es = EventSeries.from_file(fn, window=window, constraints=[MaxMergeEventConstraint(1)])
     # print('Original:\n{es.format_warped_series()}')
 
-    nb_iterations = 3
+    nb_iterations = 4
     plot = {'filename': str(directory / 'gradients_{iteration}.png'), 'symbol': {0, 1}} # , 'seriesidx': 1}
     # plot = None
     es.warp(iterations=nb_iterations, plot=plot)
+    print(f"\nDone warping model. {es.converged_str}")
 
     if window_type == "static":
         # Do one additional iteration to update the gradients with a different window
@@ -56,13 +57,13 @@ def test_likelihood7():
         " | B   |   A | B   |     | B   |     |   ",
         model=es)
     new_es.warp_with_model(iterations=3)
-    print(f"\nDone warping. {new_es.converged_str}")
+    print(f"\nDone warping new data. {new_es.converged_str}")
     print("\n" + new_es.format_warped_series())
 
     es.compute_likelihoods(laplace_smoothing=0.1)
     llls = new_es.likelihood_with_model()
     for idx, lll in enumerate(llls):
-        print(f'Likelihood[{idx}] = exp({lll:6.4f}) = {np.exp(lll):.5f}')
+        print(f'Likelihood[{idx}] = exp({lll:8.4f}) = {np.exp(lll):.5f}')
 
     llls_sol = [-1.6764, -1.6764, -2.3230, -6.4036, -8.5443, -11.9783]
     for lll, lll_sol in zip(llls, llls_sol):
