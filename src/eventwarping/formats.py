@@ -42,12 +42,17 @@ def setlist2setlists(sl, start, stop, margin):
         # Avoid that the end of a previous segment is included in the margin before the current segment
         lmargin = 0
         for _ in range(margin):
+            if startidx - lmargin - 1 < 0:
+                break
             if not stop.isdisjoint(sl[startidx - lmargin - 1]):
                 break
             lmargin += 1
         # Avoid that the start of a next segment is included in the margin after the current segment
         rmargin = 0
         for _ in range(margin):
+            if stopidx + rmargin + 1 == len(sl):
+                rmargin += 1
+                break
             if not start.isdisjoint(sl[stopidx + rmargin + 1]):
                 break
             rmargin += 1

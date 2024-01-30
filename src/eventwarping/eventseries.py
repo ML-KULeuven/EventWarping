@@ -59,7 +59,7 @@ class EventSeries:
         self.constraints = constraints
         if self.constraints is not None:
             for constraint in self.constraints:
-                constraint.es = self
+                constraint.es= self
 
     def reset(self):
         self._windowed_counts = None
@@ -74,7 +74,7 @@ class EventSeries:
         """Update derived properties after the series changed."""
         if self.constraints is not None:
             for constraint in self.constraints:
-                constraint.es = self
+                constraint.es_apnea = self
 
     def warp(self, iterations=10, restart=False, plot=None):
         for _ in self.warp_yield(iterations=iterations, restart=restart, plot=plot):
@@ -582,7 +582,7 @@ class EventSeries:
         # number is the weight whether this move should be preferred. But every
         # move is just one step (otherwise it overshoots peaks).
 
-        # Only retain large enoug directions (depends on self.count_thr)
+        # Only retain large enough directions (depends on self.count_thr)
         # self._warping_directions[~((self._warping_directions > 1) | (self._warping_directions < -1))] = 0
 
         # Warping should not be beyond peak in gradients? Makes the
@@ -898,18 +898,18 @@ class EventSeries:
         """Compute all the p(s_{i,j}|e_i).
         """
         # self._likelihoods = np.divide(self._warped_series.sum(axis=0), self.nb_series)
-        self._loglikelihoods_p = np.divide(np.add(self._warped_series.sum(axis=0), laplace_smoothing),
+        self._loglikelihoods_p = np.divide(np.add(np.sign(self._warped_series).sum(axis=0), laplace_smoothing),
                                            self.nb_series + 2*laplace_smoothing)
         self._loglikelihoods_n = np.log(1.0 - self._loglikelihoods_p)
         self._loglikelihoods_p = np.log(self._loglikelihoods_p)
 
-    def likelihood_with_model(self):
+    def likelihood_with_model(self, laplace_smoothing=1):
         """Compute likelihood of this EventSeries given the stored model."""
         if self.model is None:
             raise ValueError(f"This EventSeries has no associated model, use the 'likelihood' method.")
-        return self.likelihood(self.model)
+        return self.likelihood(self.model, laplace_smoothing=laplace_smoothing)
 
-    def likelihood(self, model: 'EventSeries' = None):
+    def likelihood(self, model: 'EventSeries' = None, laplace_smoothing=1, exclude_indices={}):
         """Likelihood of the current eventseries given the 'model' eventseries.
 
         LL = p(x|M) = prod_i p(x_i|e_i)p(e_i|M) = prod_i p(x_i|e_i)
@@ -933,7 +933,7 @@ class EventSeries:
         if model is None:
             model = self
         if model._loglikelihoods_p is None or model._loglikelihoods_n is None:
-            model.compute_likelihoods()
+            model.compute_likelihoods(laplace_smoothing)
         # TODO: check what's faster, this multiplies a lot of zeros, and requires np.sign
         ws = np.sign(self._warped_series)
         lll = np.einsum('ijk,jk->i',  ws, model._loglikelihoods_p)
