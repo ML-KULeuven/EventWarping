@@ -71,8 +71,8 @@ select_outer = np.array([True] * n)
 for i in range(3): # number of patterns
     # initialize eventseries
     es_all = EventSeries().from_setlistfiles(fn_tos, window=5, intonly=True,  ####window=3
-                                               # selected=select_outer,
-                                               # constraints=constraints,
+                                               selected=select_outer,
+                                               constraints=constraints,
                                                max_series_length=25)
     is_apnea = es_all.series[:,:,1].sum(axis=1)
     is_hypopnea = es_all.series[:,:,3].sum(axis=1)
@@ -111,14 +111,16 @@ for i in range(3): # number of patterns
     new_es_apnea = EventSeries().from_setlistfiles(fn_tos, window=5, intonly=True,
                                                constraints=constraints,
                                                max_series_length=25)
+    new_es_apnea.series[:, :, :4] = 0
     new_es_hypopnea = EventSeries().from_setlistfiles(fn_tos, window=5, intonly=True,
                                                constraints=constraints,
                                                max_series_length=25)
+    new_es_hypopnea.series[:, :, :4] = 0
 
     new_es_apnea.warp_with_model(model=es_apnea, iterations=3)
-    ll_apnea = new_es_apnea.likelihood(model=es_apnea, laplace_smoothing=0.1)
+    ll_apnea = new_es_apnea.likelihood(model=es_apnea, laplace_smoothing=0.1, exclude_items=(1,2,3,4))
     new_es_hypopnea.warp_with_model(model=es_hypopnea, iterations=3)
-    ll_hypopnea = new_es_hypopnea.likelihood(model=es_hypopnea, laplace_smoothing=0.1)
+    ll_hypopnea = new_es_hypopnea.likelihood(model=es_hypopnea, laplace_smoothing=0.1, exclude_items=(1,2,3,4))
 
     # fraction occurrences of items per timestamp
     prob_items_per_set = es_apnea.get_counts(ignore_merged=True) / es_apnea.nb_series

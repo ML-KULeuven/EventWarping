@@ -894,22 +894,32 @@ class EventSeries:
         self._warped_series = self.series
         return self._warped_series
 
-    def compute_likelihoods(self, laplace_smoothing=1):
-        """Compute all the p(s_{i,j}|e_i).
+    def compute_likelihoods(self, laplace_smoothing=1, exclude_items=()):
         """
-        # self._likelihoods = np.divide(self._warped_series.sum(axis=0), self.nb_series)
+        Compute all the p(s_{i,j}|e_i).
+        """
         self._loglikelihoods_p = np.divide(np.add(np.sign(self._warped_series).sum(axis=0), laplace_smoothing),
                                            self.nb_series + 2*laplace_smoothing)
         self._loglikelihoods_n = np.log(1.0 - self._loglikelihoods_p)
         self._loglikelihoods_p = np.log(self._loglikelihoods_p)
 
-    def likelihood_with_model(self, laplace_smoothing=1):
+        for item in exclude_items:
+            if self.intonly:
+                ind = item
+            else:
+                ind = self.symbol2int[item]
+            self._loglikelihoods_n[:, ind] = 0
+            self._loglikelihoods_p[:, ind] = 0
+
+        self._exclude_items_ll = exclude_items
+
+    def likelihood_with_model(self, laplace_smoothing=1, exclude_items=()):
         """Compute likelihood of this EventSeries given the stored model."""
         if self.model is None:
             raise ValueError(f"This EventSeries has no associated model, use the 'likelihood' method.")
-        return self.likelihood(self.model, laplace_smoothing=laplace_smoothing)
+        return self.likelihood(self.model, laplace_smoothing=laplace_smoothing, exclude_items=exclude_items)
 
-    def likelihood(self, model: 'EventSeries' = None, laplace_smoothing=1, exclude_indices={}):
+    def likelihood(self, model: 'EventSeries' = None, laplace_smoothing=1, exclude_items=()):
         """Likelihood of the current eventseries given the 'model' eventseries.
 
         LL = p(x|M) = prod_i p(x_i|e_i)p(e_i|M) = prod_i p(x_i|e_i)
@@ -932,8 +942,8 @@ class EventSeries:
         """
         if model is None:
             model = self
-        if model._loglikelihoods_p is None or model._loglikelihoods_n is None:
-            model.compute_likelihoods(laplace_smoothing)
+        if model._loglikelihoods_p is None or model._loglikelihoods_n is None or model._exclude_items_ll != exclude_items:
+            model.compute_likelihoods(laplace_smoothing, exclude_items)
         # TODO: check what's faster, this multiplies a lot of zeros, and requires np.sign
         ws = np.sign(self._warped_series)
         lll = np.einsum('ijk,jk->i',  ws, model._loglikelihoods_p)

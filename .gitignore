@@ -2,3 +2,4 @@ apnea
 .idea
 *.egg-info
 pytest.ini
+src/evenwarping/_pycache_
