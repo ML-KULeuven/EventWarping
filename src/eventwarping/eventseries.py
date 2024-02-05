@@ -396,7 +396,7 @@ class EventSeries:
             self.window.insert_spacers(nb_spacers)
         self.reset()
 
-    def get_counts(self, ignore_merged=False, filter_symbols=None):
+    def get_counts(self, ignore_merged=False, filter_symbols=None, filter_series=None):
         if self._warped_series is None:
             self._warped_series = self.series
         if filter_symbols is None:
@@ -404,13 +404,15 @@ class EventSeries:
         else:
             idxs, _, _ = np.where(self._warped_series[:, :, filter_symbols] > 0)
             ws = self._warped_series[idxs]
+        if filter_series is None:
+            filter_series = [True] * self.nb_series
         if ignore_merged:
-            cnts = np.sign(ws).sum(axis=0).T
+            cnts = np.sign(ws)[filter_series].sum(axis=0).T
         else:
-            cnts = ws.sum(axis=0).T
+            cnts = ws[filter_series].sum(axis=0).T
         return cnts
 
-    def get_smoothed_counts(self, window=3, ignore_merged=False, filter_symbols=None):
+    def get_smoothed_counts(self, window=3, ignore_merged=False, filter_symbols=None, filter_series=None):
         if self._warped_series is None:
             self._warped_series = self.series
         if filter_symbols is None:
@@ -418,10 +420,12 @@ class EventSeries:
         else:
             idxs, _, _ = np.where(self._warped_series[:, :, filter_symbols] > 0)
             ws = self._warped_series[idxs]
+        if filter_series is None:
+            filter_series = [True] * self.nb_series
         if ignore_merged:
-            counts = np.sign(ws)
+            counts = np.sign(ws)[filter_series]
         else:
-            counts = ws
+            counts = ws[filter_series]
         kernel = signal.windows.hann(window)  # make sure to be uneven to be centered
         counts = counts.sum(axis=0).T
         for si in range(counts.shape[0]):
@@ -930,6 +934,7 @@ class EventSeries:
         self._warped_series = self.series
         return self._warped_series
 
+    @property
     def isconverged(self):
         if self._converged is None:
             return False
@@ -945,10 +950,8 @@ class EventSeries:
         else:
             self._converged = None
 
-    def compute_likelihoods(self, laplace_smoothing=1,exclude_items=()):
+    def compute_likelihoods(self, laplace_smoothing=1, exclude_items=()):
         """Compute all the p(s_{i,j}|e_i).
-        """
-        Compute all the p(s_{i,j}|e_i).
         """
         self._loglikelihoods_p = np.divide(np.add(np.sign(self._warped_series).sum(axis=0), laplace_smoothing),
                                            self.nb_series + 2*laplace_smoothing)
@@ -1161,7 +1164,7 @@ class EventSeries:
             return None
         return fig, axs
 
-    def plot_symbols(self, filename=None, filter_symbols=None):
+    def plot_symbols(self, filename=None, filter_symbols=None, filter_series=None):
         """Plot the counts of all symbols over all events (aggregated over the series).
 
         :param filename: Plot directly to a file
@@ -1172,13 +1175,13 @@ class EventSeries:
         fig, axs = plt.subplots(nrows=1, ncols=2, figsize=(10, 8))
 
         ax = axs[0]
-        im = self.get_counts(ignore_merged=True, filter_symbols=filter_symbols)
+        im = self.get_counts(ignore_merged=True, filter_symbols=filter_symbols, filter_series=filter_series)
         ax.imshow(im)
         ax.set_xlabel('Events')
         ax.set_ylabel('Symbol')
 
         ax = axs[1]
-        im = self.get_smoothed_counts(window=5, ignore_merged=True, filter_symbols=filter_symbols)
+        im = self.get_smoothed_counts(window=5, ignore_merged=True, filter_symbols=filter_symbols, filter_series=filter_series)
         thr = np.quantile(im, 0.9)
         im[im < thr] = 0
         ax.imshow(im)
