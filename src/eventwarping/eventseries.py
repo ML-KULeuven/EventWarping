@@ -950,11 +950,12 @@ class EventSeries:
         else:
             self._converged = None
 
-    def compute_likelihoods(self, laplace_smoothing=1, exclude_items=()):
+    def compute_likelihoods(self, laplace_smoothing=1, exclude_items=(), selected_events = None):
         """Compute all the p(s_{i,j}|e_i).
         """
         self._loglikelihoods_p = np.divide(np.add(np.sign(self._warped_series).sum(axis=0), laplace_smoothing),
                                            self.nb_series + 2*laplace_smoothing)
+        # self._loglikelihoods_p = self._loglikelihoods_p / np.mean(self._loglikelihoods_p, axis=0) * 0.5
         self._loglikelihoods_n = np.log(1.0 - self._loglikelihoods_p)
         self._loglikelihoods_p = np.log(self._loglikelihoods_p)
 
@@ -966,19 +967,23 @@ class EventSeries:
             self._loglikelihoods_n[:, ind] = 0
             self._loglikelihoods_p[:, ind] = 0
 
+        if selected_events is not None:
+            self._loglikelihoods_n[~selected_events] = 0
+            self._loglikelihoods_p[~selected_events] = 0
+
         self._exclude_items_ll = exclude_items
 
-    def likelihood_with_model(self, laplace_smoothing=1, exclude_items=()):
+    def likelihood_with_model(self, laplace_smoothing=1, exclude_items=(), selected_events=None):
         """Compute likelihood of this EventSeries given the stored model."""
         if self.model is None:
             raise ValueError(f"This EventSeries has no associated model, use the 'likelihood' method.")
-        return self.likelihood(self.model, laplace_smoothing=laplace_smoothing, exclude_items=exclude_items)
+        return self.likelihood(self.model, laplace_smoothing, exclude_items, selected_events)
 
-    def likelihood(self, model: 'EventSeries' = None, laplace_smoothing=1, exclude_items=()):
+    def likelihood(self, model: 'EventSeries' = None, laplace_smoothing=1, exclude_items=(), selected_events=None):
         """Likelihood of the current eventseries given the 'model' eventseries.
 
         LL = p(x|M) = prod_i p(x_i|e_i)p(e_i|M) = prod_i p(x_i|e_i)
-        with i the event index
+        with i the event index of the selected events
         All transitions and thus events are equally likely (this ignored).
 
         x is a set of symbols that can appear:
@@ -998,7 +1003,7 @@ class EventSeries:
         if model is None:
             model = self
         if model._loglikelihoods_p is None or model._loglikelihoods_n is None or model._exclude_items_ll != exclude_items:
-            model.compute_likelihoods(laplace_smoothing, exclude_items)
+            model.compute_likelihoods(laplace_smoothing, exclude_items, selected_events)
         # TODO: check what's faster, this multiplies a lot of zeros, and requires np.sign
         ws = np.sign(self._warped_series)
         lll = np.einsum('ijk,jk->i',  ws, model._loglikelihoods_p)
