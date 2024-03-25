@@ -791,12 +791,6 @@ class EventSeries:
         ws = np.zeros((nb_series, self.nb_events, self.nb_symbols), dtype=int)
         wsec = np.zeros((nb_series, self.nb_events), dtype=int)
 
-        # compute constraints
-        # if self.constraints is not None:
-        #     constraint_matrix = self.constraints.calculate_constraint_matrix()
-        # else:
-        #     constraint_matrix = np.zeros((self.nb_series, self.nb_events, 3), dtype=bool)
-
         # Dynamic programming with window size 3. We only allow a shift of one or zero.
         cc = np.zeros((self.nb_events, 3))  # cumulative cost
         ps = np.zeros((self.nb_events, 3), dtype=int)  # previous state
@@ -914,7 +908,7 @@ class EventSeries:
         This method can be used to align new data to the originally given data. Assuming
         that warping has been applied to that originally given data.
 
-        See align_series for more informatin.
+        See align_series for more information.
         """
         converged = None
         for idx in range(iterations):
@@ -1169,7 +1163,7 @@ class EventSeries:
             return None
         return fig, axs
 
-    def plot_symbols(self, filename=None, filter_symbols=None, filter_series=None):
+    def plot_symbols(self, filename=None, filter_symbols=None, filter_series=None, title=None):
         """Plot the counts of all symbols over all events (aggregated over the series).
 
         :param filename: Plot directly to a file
@@ -1184,6 +1178,8 @@ class EventSeries:
         ax.imshow(im)
         ax.set_xlabel('Events')
         ax.set_ylabel('Symbol')
+        if title:
+            ax.set_title(title)
 
         ax = axs[1]
         im = self.get_smoothed_counts(window=5, ignore_merged=True, filter_symbols=filter_symbols, filter_series=filter_series)
@@ -1192,6 +1188,34 @@ class EventSeries:
         ax.imshow(im)
         ax.set_xlabel('Events')
         ax.set_ylabel('Symbol')
+
+        if filename is not None:
+            fig.savefig(filename, bbox_inches='tight')
+            plt.close(fig)
+            return None
+        return fig, axs
+
+
+    def plot_series(self, series_nr, filename=None):
+        """Plot the counts of all symbols over all events of a series and the warped series
+
+        :param filename: Plot directly to a file
+        :param series_nr: which series to plot
+        """
+        import matplotlib.pyplot as plt
+        fig, axs = plt.subplots(nrows=1, ncols=2, figsize=(10, 8))
+
+        ax = axs[0]
+        ax.imshow(self.series[series_nr].T)
+        ax.set_xlabel('Events')
+        ax.set_ylabel('Symbol')
+        ax.set_title('series')
+
+        ax = axs[1]
+        ax.imshow(np.sign(self.warped_series[series_nr].T))
+        ax.set_xlabel('Events')
+        ax.set_ylabel('Symbol')
+        ax.set_title('warped series')
 
         if filename is not None:
             fig.savefig(filename, bbox_inches='tight')
