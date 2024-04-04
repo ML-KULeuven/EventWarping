@@ -276,6 +276,26 @@ def read_test_data(folder):
     return test_data
 
 
+def series_to_diff_series(series, symbol_ordenings):
+    nb_series, nb_events, nb_items = series.shape
+    diff_series = np.zeros((nb_series, nb_events, len(symbol_ordenings)))
+    for k, ordening in enumerate(symbol_ordenings):
+        series_ordening = series[:,:,ordening]
+        for j, serie in enumerate(series_ordening):
+            ind = np.argwhere(serie)
+            serie_max = np.array([np.max(ind[ind[:, 0] == i, 1], initial=-1000) for i in range(nb_events)])
+            serie_min = np.array([np.min(ind[ind[:, 0] == i, 1], initial=1000) for i in range(nb_events)])
+            serie_pos_diff = np.array([serie_min[i] - serie_max[i - 1] for i in range(1, nb_events)])
+            serie_neg_diff = np.array([serie_max[i] - serie_min[i - 1] for i in range(1, nb_events)])
+            sel = np.array([serie_pos_diff[i] * serie_neg_diff[i] >= 0 for i in range(nb_events-1)])
+            sel_pos = np.abs(serie_pos_diff) > np.abs(serie_neg_diff)
+            series_diff = np.zeros(nb_events)
+            series_diff[1:][sel_pos * sel] = serie_pos_diff[sel_pos * sel]
+            series_diff[1:][~sel_pos * sel] = serie_neg_diff[~sel_pos * sel]
+            diff_series[j,:,k] = series_diff
+    return diff_series
+
+
 # define data and parameters
 symbol_ordenings = [[5, 6, 7, 8, 9, 10, 11, 12, 13, 14], [15, 16, 17, 18, 19, 20, 21, 22, 23, 24],
                     [25, 26, 27, 28, 29, 30, 31, 32, 33, 34], [35, 36, 37, 38, 39, 40, 41, 42, 43, 44]]
@@ -295,7 +315,7 @@ for fn in fns:
     fn_tos += [fn_to]
     # setlistfile2setlistsfile(fn, fn_to, start={1,3}, stop={2,4}, margin=5, symbol_ordenings=symbol_ordenings)
 
-#
+
 # for max_dist in [10]:
 #     print(f"******************* {max_dist} ********************")
 #     file_name_apnea = "es_apnea" + f"max_{max_dist}"
@@ -322,7 +342,6 @@ for fn in fns:
 #     # warp test data with model
 #     files_test_data = [results_folder / 'test_data.txt']
 #     es_apnea_model, es_hypopnea_model = warp_test_data_with_model(files_test_data, param_dict, n_iter, es_apnea, es_hypopnea, file_name_apnea_model, file_name_hypopnea_model)
-#
 
 
 for max_dist in [10]:
@@ -334,6 +353,9 @@ for max_dist in [10]:
         es_apnea_model = pickle.load(file)
     with open(results_folder / file_name_hypopnea_model, 'rb') as file:
         es_hypopnea_model = pickle.load(file)
+
+    # diff_series = series_to_diff_series(es_apnea_model.warped_series, symbol_ordenings)
+    # es_apnea_model.diff_series = diff_series
 
     # do different evaluations
     with (results_folder / 'test_data_labels.txt').open('r') as file:
