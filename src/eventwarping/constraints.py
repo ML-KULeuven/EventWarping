@@ -135,7 +135,7 @@ class NoMergeTooDistantSymbolSetConstraint(ConstraintBaseClass):
 
     def _translate_to_symbols(self, array):
         if self.es is None or len(self.es.symbol2int) == 0:
-            return set(np.argwhere(array).flatten())
+            return set(np.nonzero(array)[0])
         int2symbol = {v:k for k,v in self.es.symbol2int.items()}
         return {int2symbol.get(i, i) for i in np.argwhere(array).flatten()}
 

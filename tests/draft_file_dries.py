@@ -3,7 +3,7 @@ import os
 import pickle
 import sys
 
-sys.path += ["C:\\users\\dries\\eventwarping2\\src"]
+sys.path += [r"C:\Users\dries\Python projects\EventWarping\src"]
 
 from pathlib import Path
 from sklearn.tree import DecisionTreeClassifier as DTC
@@ -15,6 +15,8 @@ from sklearn.tree import plot_tree
 
 from eventwarping.formats import setlistfile2setlistsfile, smooth_series
 from eventwarping.eventseries import EventSeries
+from eventwarping.constraints import NoMergeTooDistantSymbolSetConstraint, MaxMergeSymbolConstraint, NoXorMergeSymbolSetConstraint
+from eventwarping.window import LinearScalingWindow
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -110,9 +112,10 @@ def train_event_series_alignment(fns, param_dict, n_iter, folder, file_name_apne
     es_hypopnea.series[:, ::-1, 3][np.cumsum(es_hypopnea.series[:, ::-1, 4], 1) == 0] = 0
 
     # set excluded events to 0 in series
-    for event in excluded_events:
-        es_apnea.series[:, :, event] = 0
-        es_hypopnea.series[:, :, event] = 0
+    if excluded_events is not None:
+        for event in excluded_events:
+            es_apnea.series[:, :, event] = 0
+            es_hypopnea.series[:, :, event] = 0
 
     # do alignment
     for i, ws in enumerate(es_apnea.warp_yield(iterations=n_iter, restart=True)):
@@ -137,9 +140,10 @@ def warp_test_data_with_model(files_test_data, param_dict, n_iter, es_apnea, es_
     es_hypopnea_model.series[:, :, :5] = 0
 
     # set excluded events to 0 in series
-    for event in excluded_events:
-        es_apnea.series[:, :, event] = 0
-        es_hypopnea.series[:, :, event] = 0
+    if excluded_events is not None:
+        for event in excluded_events:
+            es_apnea.series[:, :, event] = 0
+            es_hypopnea.series[:, :, event] = 0
 
     es_apnea_model.warp_with_model(model=es_apnea, iterations=n_iter)
     es_hypopnea_model.warp_with_model(model=es_hypopnea, iterations=n_iter)
@@ -167,59 +171,67 @@ def do_evaluations(labels, model, model_name, model_class):
         class_name = 'hypopnea'
 
     # plot symbols of model
-    model.plot_symbols(filter_series=is_apnea, title=f'{class_name} data warped by {model_name} model')
+    model.plot_symbols(filter_series=is_apnea, title=f'warped by {model_name} model')
+    model.plot_symbols(filter_series=is_hypopnea, title=f'warped by {model_name} model')
+    model.plot_symbols(filter_series=is_random, title=f'warped by {model_name} model')
 
     # learn classifiers on warped series
-    x = np.sign(model.warped_series[~is_wake].reshape(-1, 25 * 50))
+    x = np.sign(model.warped_series[~is_wake])
+    x = np.concatenate((x, model.diff_series[~is_wake]), axis=2)  #############
+    x = x.reshape((sum(~is_wake), -1))
     x_nowarp = np.sign(model.series[~is_wake].reshape(-1, 25 * 50))
     y = labels_sleep
 
     def rf_clf(x_train, x_test, y_train, y_test):
-        clf = RFC(min_samples_leaf=50, max_features=100, n_estimators=100)
+        clf = RFC(min_samples_leaf=30, max_features=100, n_estimators=100)
         clf.fit(x_train, y_train)
         y_pred = clf.predict(x_test)
         cm = CM(y_test, y_pred)
         prec = precision_score(y_test, y_pred, average=None)
         rec = recall_score(y_test, y_pred, average=None)
-        print(cm, prec, rec)
-        return cm, prec, rec
+        acc = np.mean(y_pred == y_test)
+        print(cm, prec, rec, acc)
+
+        plt.figure()
+        plt.imshow(clf.feature_importances_.reshape((25,-1)).T)
+        return cm, prec, rec, acc
 
     print('before warping')
-    cm, prec, rec = rf_clf(x_nowarp[::2], x_nowarp[1::2], y[0::2], y[1::2])
+    cm, prec, rec, acc = rf_clf(x_nowarp[::2], x_nowarp[1::2], y[0::2], y[1::2])
 
     print('after warping')
-    cm, prec, rec = rf_clf(x[::2], x[1::2], y[0::2], y[1::2])
+    cm, prec, rec, acc = rf_clf(x[::2], x[1::2], y[::2], y[1::2])
 
     print('after warping train set')
-    cm, prec, rec = rf_clf(x[::2], x[::2], y[0::2], y[::2])
+    cm, prec, rec, acc = rf_clf(x[::2], x[::2], y[::2], y[::2])
 
     print(f'after warping: 2 classes ({model_name} or not)')
-    cm, prec, rec = rf_clf(x[::2], x[1::2], is_class[::2], is_class[1::2])
+    cm, prec, rec, acc = rf_clf(x[::2], x[1::2], is_class[::2], is_class[1::2])
 
-    # decision tree plot
-    with (items_folder / 'alphabet.pkl').open('rb') as file:
-        alphabet = pickle.load(file)
-    alphabet[0] = ""
-    # select some instances
-    x7 = copy(x).reshape((-1, 25, 50))
-    for i in range(len(x7)):
-        x7[i, :, 45] = (sum(x7[i, :, 45]) > 5) * 1
-    x7 = x7.reshape((-1, 25 * 50))
-    sel = np.array([True] * len(x7))
-    # learn and plot tree (2 classes)
-    dt = DTC(min_samples_leaf=30)
-    dt.fit(x7[sel][::2], is_class[sel][::2])
-    plt.figure()
-    plot_tree(dt,
-              feature_names=[(i // 50, alphabet[i % 50]) for i in range(1250)],
-              fontsize=5, filled=True, impurity=False)
-    # learn and plot tree (3 classes)
-    dt = DTC(min_samples_leaf=30)
-    dt.fit(x7[sel][::2], y[::2])
-    plt.figure()
-    plot_tree(dt,
-              feature_names=[(i // 50, alphabet[i % 50]) for i in range(1250)],
-              fontsize=5, filled=True, impurity=False)
+    # # decision tree plot
+    # with (items_folder / 'alphabet.pkl').open('rb') as file:
+    #     alphabet = pickle.load(file)
+    # alphabet[0] = ""
+    # # select some instances
+    # x7 = copy(x).reshape((-1, 25, 50))
+    # for i in range(len(x7)):
+    #     x7[i, :, 45] = (sum(x7[i, :, 45]) > 5) * 1
+    # x7 = x7.reshape((-1, 25 * 50))
+    # sel = np.array([True] * len(x7))
+    # # learn and plot tree (2 classes)
+    # dt = DTC(min_samples_leaf=30)
+    # dt.fit(x7[sel][::2], is_class[sel][::2])
+    # plt.figure()
+    # plot_tree(dt,
+    #           feature_names=[(i // 50, alphabet[i % 50]) for i in range(1250)],
+    #           fontsize=5, filled=True, impurity=False)
+    # # learn and plot tree (3 classes)
+    # dt = DTC(min_samples_leaf=30)
+    # dt.fit(x7[sel][::2], y[::2])
+    # plt.figure()
+    # plot_tree(dt,
+    #           feature_names=[(i // 50, alphabet[i % 50]) for i in range(1250)],
+    #           fontsize=5, filled=True, impurity=False)
 
     # plot decrease of 100 apnea/hypopnea
     fig, axs = plt.subplots(10, 10)
@@ -228,7 +240,7 @@ def do_evaluations(labels, model, model_name, model_class):
     j = 0
     for i in range(len(x)):
         if y[i] == model_class:  # hypopnea
-            axs[j // 10, j % 10].imshow(x[i].reshape((25, 50))[0:10, 5:26].T,
+            axs[j // 10, j % 10].imshow(x[i].reshape((25, -1))[0:10, 5:26].T,
                                         aspect='auto')
             axs[j // 10, j % 10].set_xticklabels([])
             axs[j // 10, j % 10].set_yticklabels([])
@@ -241,7 +253,7 @@ def do_evaluations(labels, model, model_name, model_class):
     j = 0
     for i in range(len(x_nowarp)):
         if y[i] == model_class:
-            axs[j // 10, j % 10].imshow(x_nowarp[i].reshape((25, 50))[0:10, 5:26].T,
+            axs[j // 10, j % 10].imshow(x_nowarp[i].reshape((25, -1))[0:10, 5:26].T,
                                         aspect='auto')
             axs[j // 10, j % 10].set_xticklabels([])
             axs[j // 10, j % 10].set_yticklabels([])
@@ -292,7 +304,7 @@ def series_to_diff_series(series, symbol_ordenings):
             series_diff = np.zeros(nb_events)
             series_diff[1:][sel_pos * sel] = serie_pos_diff[sel_pos * sel]
             series_diff[1:][~sel_pos * sel] = serie_neg_diff[~sel_pos * sel]
-            diff_series[j,:,k] = series_diff
+            diff_series[j, :, k] = series_diff
     return diff_series
 
 
@@ -300,11 +312,11 @@ def series_to_diff_series(series, symbol_ordenings):
 symbol_ordenings = [[5, 6, 7, 8, 9, 10, 11, 12, 13, 14], [15, 16, 17, 18, 19, 20, 21, 22, 23, 24],
                     [25, 26, 27, 28, 29, 30, 31, 32, 33, 34], [35, 36, 37, 38, 39, 40, 41, 42, 43, 44]]
 
-items_folder = Path(r"C:\Users\dries\input_data_pattern_mining11")
-results_folder = Path(r"C:\Users\dries\input_data_pattern_mining11_smoothed")
+items_folder = Path(r"C:\Users\dries\python projects\itemsets")
+results_folder = Path(r"C:\Users\dries\python projects\smoothed_itemsets")
 fns = [i for i in os.listdir(items_folder) if (i.endswith('itemsets.txt')) and not (i.endswith('parsed_itemsets.txt'))]
 fns = [items_folder / i for i in fns]
-# make_test_set(fns[1::2], results_folder, symbol_ordenings=symbol_ordenings)
+make_test_set(fns[1::2], results_folder, symbol_ordenings=symbol_ordenings)
 fns = fns[::2]
 
 fn_tos = []
@@ -354,8 +366,8 @@ for max_dist in [10]:
     with open(results_folder / file_name_hypopnea_model, 'rb') as file:
         es_hypopnea_model = pickle.load(file)
 
-    # diff_series = series_to_diff_series(es_apnea_model.warped_series, symbol_ordenings)
-    # es_apnea_model.diff_series = diff_series
+    diff_series = series_to_diff_series(es_apnea_model.warped_series, symbol_ordenings)
+    es_apnea_model.diff_series = diff_series
 
     # do different evaluations
     with (results_folder / 'test_data_labels.txt').open('r') as file:

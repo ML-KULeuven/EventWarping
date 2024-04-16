@@ -771,6 +771,7 @@ class EventSeries:
         self._versions[V_WS] += 1
         return self._warped_series
 
+
     def align_series(self, series, series_ec=None):
         """Align events in the given series based on the previously computed gradients.
 
@@ -1171,9 +1172,20 @@ class EventSeries:
         :returns: fig, axs if filename is not given
         """
         import matplotlib.pyplot as plt
-        fig, axs = plt.subplots(nrows=1, ncols=2, figsize=(10, 8))
+        fig, axs = plt.subplots(nrows=1, ncols=3, figsize=(10, 8))
 
         ax = axs[0]
+        if filter_series is not None:
+            im = self.series[filter_series].sum(axis=0).T
+        else:
+            im = self.series.sum(axis=0).T
+        ax.imshow(im)
+        ax.set_xlabel('Events')
+        ax.set_ylabel('Symbol')
+        if title:
+            ax.set_title("no warping")
+
+        ax = axs[1]
         im = self.get_counts(ignore_merged=True, filter_symbols=filter_symbols, filter_series=filter_series)
         ax.imshow(im)
         ax.set_xlabel('Events')
@@ -1181,7 +1193,7 @@ class EventSeries:
         if title:
             ax.set_title(title)
 
-        ax = axs[1]
+        ax = axs[2]
         im = self.get_smoothed_counts(window=5, ignore_merged=True, filter_symbols=filter_symbols, filter_series=filter_series)
         thr = np.quantile(im, 0.9)
         im[im < thr] = 0
