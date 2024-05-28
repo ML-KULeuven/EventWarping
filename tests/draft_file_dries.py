@@ -2,21 +2,24 @@ import ast
 import os
 import pickle
 import sys
+from copy import copy
+
+from src.eventwarping.constraints import NoMergeTooDistantSymbolSetConstraint, MaxMergeSymbolConstraint, \
+    NoXorMergeSymbolSetConstraint
+from src.eventwarping.window import LinearScalingWindow
+from tests.apnea_evaluation import do_evaluations
+from AT.respiratory.pattern_mining.plot import plot_itemsets
+from AT.blocks.data.data_set import BaseSet
+from AT.respiratory import uza_multilabeled_single_files
 
 sys.path += [r"C:\Users\dries\Python projects\EventWarping\src"]
+sys.path += [r"C:\Users\dries\Python projects\AItoolkit"]
 
 from pathlib import Path
-from sklearn.tree import DecisionTreeClassifier as DTC
-from sklearn.ensemble import RandomForestClassifier as RFC
-from sklearn.metrics import confusion_matrix as CM, precision_score, \
-    recall_score
-from copy import copy
-from sklearn.tree import plot_tree
 
+from sklearn.ensemble import RandomForestClassifier as RFC
 from eventwarping.formats import setlistfile2setlistsfile, smooth_series
 from eventwarping.eventseries import EventSeries
-from eventwarping.constraints import NoMergeTooDistantSymbolSetConstraint, MaxMergeSymbolConstraint, NoXorMergeSymbolSetConstraint
-from eventwarping.window import LinearScalingWindow
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -51,7 +54,7 @@ def dist_respiratory_series(s, t, d_empty=0, n_categories=10):
 
 
 def make_test_set(paths, folder, events_per_sequence=25, symbol_ordenings=None):
-    " Test data. Label apnea/hypopnea if start in first 10 events of the series"
+    "Test data. Label apnea/hypopnea if start in first 10 events of the series"
     data = []
     labels = []
     data_origin = []
@@ -123,15 +126,15 @@ def train_event_series_alignment(fns, param_dict, n_iter, folder, file_name_apne
     for i, ws in enumerate(es_hypopnea.warp_yield(iterations=n_iter, restart=True)):
         print(f"=== {i + 1:>2} ===")
 
-    with open(folder / (file_name_apnea + ".pkl"), 'wb') as file:
+    with open(folder / (file_name_apnea), 'wb') as file:
         pickle.dump(es_apnea, file)
-    with open(folder / (file_name_hypopnea + ".pkl"), 'wb') as file:
+    with open(folder / (file_name_hypopnea), 'wb') as file:
         pickle.dump(es_hypopnea, file)
 
     return es_apnea, es_hypopnea
 
 
-def warp_test_data_with_model(files_test_data, param_dict, n_iter, es_apnea, es_hypopnea, file_name_apnea_model="es_apnea_model", file_name_hypopnea_model="es_hypopnea_model", excluded_events=None):
+def warp_test_data_with_model(files_test_data, param_dict, n_iter, es_apnea, es_hypopnea, models_folder, file_name_apnea_model="es_apnea_model", file_name_hypopnea_model="es_hypopnea_model", excluded_events=None):
     es_apnea_model = EventSeries().from_setlistfiles(files_test_data,
                                                      **param_dict)
     es_apnea_model.series[:, :, :5] = 0
@@ -148,144 +151,12 @@ def warp_test_data_with_model(files_test_data, param_dict, n_iter, es_apnea, es_
     es_apnea_model.warp_with_model(model=es_apnea, iterations=n_iter)
     es_hypopnea_model.warp_with_model(model=es_hypopnea, iterations=n_iter)
 
-    with open(results_folder / (file_name_apnea_model + ".pkl"), 'wb') as file:
+    with open(models_folder / (file_name_apnea_model), 'wb') as file:
         pickle.dump(es_apnea_model, file)
-    with open(results_folder / (file_name_hypopnea_model + ".pkl"), 'wb') as file:
+    with open(models_folder / (file_name_hypopnea_model), 'wb') as file:
         pickle.dump(es_hypopnea_model, file)
 
     return es_apnea_model, es_hypopnea_model
-
-
-def do_evaluations(labels, model, model_name, model_class):
-    is_apnea = labels == 1
-    is_hypopnea = labels == 2
-    is_random = labels == 0
-    is_wake = np.sum(model.series[:,:,48],1) > 5
-    labels_sleep = labels[~is_wake]
-
-    if model_class == 1:
-        is_class = is_apnea[~is_wake]
-        class_name = 'apnea'
-    if model_class == 2:
-        is_class = is_hypopnea[~is_wake]
-        class_name = 'hypopnea'
-
-    # plot symbols of model
-    model.plot_symbols(filter_series=is_apnea, title=f'warped by {model_name} model')
-    model.plot_symbols(filter_series=is_hypopnea, title=f'warped by {model_name} model')
-    model.plot_symbols(filter_series=is_random, title=f'warped by {model_name} model')
-
-    # learn classifiers on warped series
-    x = np.sign(model.warped_series[~is_wake])
-    x = np.concatenate((x, model.diff_series[~is_wake]), axis=2)  #############
-    x = x.reshape((sum(~is_wake), -1))
-    x_nowarp = np.sign(model.series[~is_wake].reshape(-1, 25 * 50))
-    y = labels_sleep
-
-    def rf_clf(x_train, x_test, y_train, y_test):
-        clf = RFC(min_samples_leaf=30, max_features=100, n_estimators=100)
-        clf.fit(x_train, y_train)
-        y_pred = clf.predict(x_test)
-        cm = CM(y_test, y_pred)
-        prec = precision_score(y_test, y_pred, average=None)
-        rec = recall_score(y_test, y_pred, average=None)
-        acc = np.mean(y_pred == y_test)
-        print(cm, prec, rec, acc)
-
-        plt.figure()
-        plt.imshow(clf.feature_importances_.reshape((25,-1)).T)
-        return cm, prec, rec, acc
-
-    print('before warping')
-    cm, prec, rec, acc = rf_clf(x_nowarp[::2], x_nowarp[1::2], y[0::2], y[1::2])
-
-    print('after warping')
-    cm, prec, rec, acc = rf_clf(x[::2], x[1::2], y[::2], y[1::2])
-
-    print('after warping train set')
-    cm, prec, rec, acc = rf_clf(x[::2], x[::2], y[::2], y[::2])
-
-    print(f'after warping: 2 classes ({model_name} or not)')
-    cm, prec, rec, acc = rf_clf(x[::2], x[1::2], is_class[::2], is_class[1::2])
-
-    # # decision tree plot
-    # with (items_folder / 'alphabet.pkl').open('rb') as file:
-    #     alphabet = pickle.load(file)
-    # alphabet[0] = ""
-    # # select some instances
-    # x7 = copy(x).reshape((-1, 25, 50))
-    # for i in range(len(x7)):
-    #     x7[i, :, 45] = (sum(x7[i, :, 45]) > 5) * 1
-    # x7 = x7.reshape((-1, 25 * 50))
-    # sel = np.array([True] * len(x7))
-    # # learn and plot tree (2 classes)
-    # dt = DTC(min_samples_leaf=30)
-    # dt.fit(x7[sel][::2], is_class[sel][::2])
-    # plt.figure()
-    # plot_tree(dt,
-    #           feature_names=[(i // 50, alphabet[i % 50]) for i in range(1250)],
-    #           fontsize=5, filled=True, impurity=False)
-    # # learn and plot tree (3 classes)
-    # dt = DTC(min_samples_leaf=30)
-    # dt.fit(x7[sel][::2], y[::2])
-    # plt.figure()
-    # plot_tree(dt,
-    #           feature_names=[(i // 50, alphabet[i % 50]) for i in range(1250)],
-    #           fontsize=5, filled=True, impurity=False)
-
-    # plot decrease of 100 apnea/hypopnea
-    fig, axs = plt.subplots(10, 10)
-    fig.suptitle(f'{model_name} data after warping with {model_name} model')
-    plt.subplots_adjust(wspace=0.1, hspace=0.1)
-    j = 0
-    for i in range(len(x)):
-        if y[i] == model_class:  # hypopnea
-            axs[j // 10, j % 10].imshow(x[i].reshape((25, -1))[0:10, 5:26].T,
-                                        aspect='auto')
-            axs[j // 10, j % 10].set_xticklabels([])
-            axs[j // 10, j % 10].set_yticklabels([])
-            j += 1
-        if j == 100:
-            break
-    fig, axs = plt.subplots(10, 10)
-    fig.suptitle(f'{model_name} data before warping')
-    plt.subplots_adjust(wspace=0.1, hspace=0.1)
-    j = 0
-    for i in range(len(x_nowarp)):
-        if y[i] == model_class:
-            axs[j // 10, j % 10].imshow(x_nowarp[i].reshape((25, -1))[0:10, 5:26].T,
-                                        aspect='auto')
-            axs[j // 10, j % 10].set_xticklabels([])
-            axs[j // 10, j % 10].set_yticklabels([])
-            j += 1
-        if j == 100:
-            break
-
-    # # influence of start position apnea/hypopnea on accuracy
-    # test_data = read_test_data(results_folder)[~is_wake][1::2]
-    # apnea_index_per_test_series = [np.argwhere([len(i.intersection({1, 2, 3, 4})) > 0 for i in j]) for j in test_data]
-    # apnea_indices = np.array([apnea_index_per_test_series[i][0] for i in range(len(test_data)) if is_apnea[~is_wake][1::2][i]])[:,0]
-    # hypopnea_indices = np.array([apnea_index_per_test_series[i][0] for i in range(len(test_data)) if is_hypopnea[~is_wake][1::2][i]])[:, 0]
-    # for i in range(10):
-    #     a = (y_pred == y[1::2])[[~is_wake][1::2]][apnea_indices == i]
-    #     print(i, len(a), np.mean(a))
-    # for i in range(10):
-    #     a = (y_pred == y[1::2])[is_hypopnea[~is_wake][1::2]][hypopnea_indices == i]
-    #     print(i, len(a), np.mean(a))
-
-    plt.show()
-    print('evaluation ended')
-
-
-def read_test_data(folder):
-    test_data = []
-    with (folder / 'test_data.txt').open('r') as file:
-        while True:
-            line = file.readline()
-            if not line:
-                break
-            test_data += [eval(line)]
-    return test_data
 
 
 def series_to_diff_series(series, symbol_ordenings):
@@ -308,75 +179,154 @@ def series_to_diff_series(series, symbol_ordenings):
     return diff_series
 
 
-# define data and parameters
-symbol_ordenings = [[5, 6, 7, 8, 9, 10, 11, 12, 13, 14], [15, 16, 17, 18, 19, 20, 21, 22, 23, 24],
-                    [25, 26, 27, 28, 29, 30, 31, 32, 33, 34], [35, 36, 37, 38, 39, 40, 41, 42, 43, 44]]
+def predict_apnea_per_file(filename, clf, model, brt_files_apnea=None):
+    """Filename of itemsets, brt_files_apnea: files to extract apnea from, otherwise from itemsets"""
+    # read data
+    with open(filename, 'r') as f:
+        setlist = eval(f.read())
+    with open(str(filename).replace('itemsets.txt', 'itemset_times.txt'), 'r') as f:
+        times = eval(f.read())
+    setlist = smooth_series([setlist], symbol_ordenings)[0]
 
-items_folder = Path(r"C:\Users\dries\python projects\itemsets")
-results_folder = Path(r"C:\Users\dries\python projects\smoothed_itemsets")
-fns = [i for i in os.listdir(items_folder) if (i.endswith('itemsets.txt')) and not (i.endswith('parsed_itemsets.txt'))]
-fns = [items_folder / i for i in fns]
-make_test_set(fns[1::2], results_folder, symbol_ordenings=symbol_ordenings)
-fns = fns[::2]
+    # transform sets to matrix of series
+    shift = 5
+    window_size = 25
+    data_matrix = np.zeros((len(setlist), 50))
+    for i, s in enumerate(setlist):
+        for j in s:
+            data_matrix[i, j] = 1
+    data_windowed = np.zeros((len(data_matrix) // shift - (window_size // shift), window_size, 50))
+    for i in range(len(data_windowed)):
+        data_windowed[i] = data_matrix[i * shift:(i * shift + window_size)]
 
-fn_tos = []
-for fn in fns:
-    print(f"Path exists = {fn.exists()}: {fn}")
-    fn_to = results_folder / (fn.stem + "_series.txt")
-    print(f"Saving to {fn_to}")
-    fn_tos += [fn_to]
-    # setlistfile2setlistsfile(fn, fn_to, start={1,3}, stop={2,4}, margin=5, symbol_ordenings=symbol_ordenings)
+    # warp series with model
+    data_aligned = model.align_series_times(data_windowed, iterations=10)[0]
+
+    # plot prediction of clf
+    y_pred = clf.predict_proba(data_aligned.reshape((len(data_windowed), window_size * 50)))
+    plt.figure()
+    plt.plot(times[::shift][:len(y_pred)], y_pred)
+
+    # add apnea and hypopnea to plot
+    from AT.respiratory.itemset_construction.items_of_psg import _read_respiratory_events
+    if brt_files_apnea:
+        # multilabeled, so plot apnea of each file
+        for j, path_brt in enumerate(brt_files_apnea):
+            starts, ends, is_hypopnea = _read_respiratory_events(path_brt)
+            plt.hlines([1.05 + 0.05*j] * sum(~is_hypopnea), starts[~is_hypopnea], ends[~is_hypopnea], color='k')
+            plt.hlines([1.05 + 0.05*j] * sum(is_hypopnea), starts[is_hypopnea], ends[is_hypopnea], color='b')
+    else:
+        # apnea based on itemsets
+        is_apnea = np.array([1 in i for i in setlist])
+        is_hypopnea = np.array([3 in i for i in setlist])
+        plt.hlines([1.05] * sum(is_apnea), np.array(times)[is_apnea] - 15, np.array(times)[is_apnea] + 15, color='k')
+        plt.hlines([1.05] * sum(is_hypopnea), np.array(times)[is_hypopnea] - 15, np.array(times)[is_hypopnea] + 15, color='b')
+
+        path_brt = [i for i in BaseSet.TRAIN|BaseSet.VAL if filename.parts[-1].replace('_itemsets.txt', '') in i][0]
+
+    # add feature plots
+    d = np.repeat(data_matrix, np.diff(np.array([0] + times) // 0.5).astype(int),
+                  axis=0).T  # data aligned over time
+    plt.imshow(d, extent=(0, max(times), -1, 0), aspect='auto')
+    plt.ylim((-1, 1.3))
+
+    # plot itemsets
+    # if path_brt.startswith('\\\\OSG-110'):
+    #     brt_file = path_brt.replace(r'\\OSG-110\USB_Full',
+    #                                 r'\\osgnet\signals\OSG-110')
+    # else:
+    #     brt_file = path_brt.replace(r'\\osgnet\data', r'\\osgnet\signals')
+    # dir_itemsets = str(filename.parents[0]) + "//"
+    # plot_itemsets(str(brt_file), dir_itemsets)
+    return y_pred
 
 
-# for max_dist in [10]:
-#     print(f"******************* {max_dist} ********************")
-#     file_name_apnea = "es_apnea" + f"max_{max_dist}"
-#     file_name_hypopnea = "es_hypopnea" + f"max_{max_dist}"
-#     file_name_apnea_model = "es_apnea_model" + f"max_{max_dist}"
-#     file_name_hypopnea_model = "es_hypopnea_model" + f"max_{max_dist}"
-#
-#     constraints = [
-#         NoMergeTooDistantSymbolSetConstraint(dist_respiratory_itemsets, max_dist),
-#         MaxMergeSymbolConstraint(5),
-#         NoXorMergeSymbolSetConstraint([1, 2, 3, 4])
-#     ]
-#     param_dict = {"window": LinearScalingWindow(5), "intonly": True, "constraints": constraints, "max_series_length": 25}
-#     n_iter = 10
-#
-#     # train event alignment
-#     es_apnea, es_hypopnea = train_event_series_alignment(fn_tos, param_dict, n_iter, results_folder, file_name_apnea, file_name_hypopnea)
-#
-#     with open(results_folder / (file_name_apnea + '.pkl'), 'rb') as file:
-#         es_apnea = pickle.load(file)
-#     with open(results_folder / (file_name_hypopnea + '.pkl'), 'rb') as file:
-#         es_hypopnea = pickle.load(file)
-#
-#     # warp test data with model
-#     files_test_data = [results_folder / 'test_data.txt']
-#     es_apnea_model, es_hypopnea_model = warp_test_data_with_model(files_test_data, param_dict, n_iter, es_apnea, es_hypopnea, file_name_apnea_model, file_name_hypopnea_model)
+if __name__ == '__main__':
+    # define data and parameters
+    symbol_ordenings = [[5, 6, 7, 8, 9, 10, 11, 12, 13, 14], [15, 16, 17, 18, 19, 20, 21, 22, 23, 24],
+                        [25, 26, 27, 28, 29, 30, 31, 32, 33, 34], [35, 36, 37, 38, 39, 40, 41, 42, 43, 44]]
 
+    items_folder = Path(r"C:\Users\dries\python projects\itemsets_new")  # training and files test set
+    items_smooth_folder = Path(r"C:\Users\dries\python projects\smoothed_itemsets_new")
+    models_folder = Path(r"C:\Users\dries\python projects\smoothed_itemsets_new")
+    fns = [i for i in os.listdir(items_folder) if (i.endswith('itemsets.txt')) and not (i.endswith('parsed_itemsets.txt'))]
+    fns = [items_folder / i for i in fns]
+    fns_test = copy(fns[1::2])
+    fns = fns[::2]  # train set
 
-for max_dist in [10]:
-    print(f"******************* {max_dist} ********************")
+    max_dist = 10
+    file_name_apnea = "es_apnea" + f"max_{max_dist}.pkl"
+    file_name_hypopnea = "es_hypopnea" + f"max_{max_dist}.pkl"
     file_name_apnea_model = "es_apnea_model" + f"max_{max_dist}.pkl"
     file_name_hypopnea_model = "es_hypopnea_model" + f"max_{max_dist}.pkl"
 
-    with open(results_folder / file_name_apnea_model, 'rb') as file:
-        es_apnea_model = pickle.load(file)
-    with open(results_folder / file_name_hypopnea_model, 'rb') as file:
-        es_hypopnea_model = pickle.load(file)
+    constraints = [
+        NoMergeTooDistantSymbolSetConstraint(dist_respiratory_itemsets, max_dist),
+        MaxMergeSymbolConstraint(5),
+        NoXorMergeSymbolSetConstraint([1, 2, 3, 4])
+    ]
+    param_dict = {"window": LinearScalingWindow(5), "intonly": True, "constraints": constraints, "max_series_length": 25}
+    n_iter = 10
 
-    diff_series = series_to_diff_series(es_apnea_model.warped_series, symbol_ordenings)
-    es_apnea_model.diff_series = diff_series
+    ##############################################
 
-    # do different evaluations
-    with (results_folder / 'test_data_labels.txt').open('r') as file:
-        labels_test = np.array(eval(file.read()))
-    print("----------apnea-------------")
-    do_evaluations(labels_test, es_apnea_model, 'apnea', 1)
-    # print("--------hypopnea------------")
-    # do_evaluations(labels_test, es_hypopnea_model, 'hypopnea', 2)
+    # # save smoothed itemsets
+    # fn_tos = []
+    # for fn in fns:
+    #     print(f"Path exists = {fn.exists()}: {fn}")
+    #     fn_to = items_smooth_folder / (fn.stem + "_series.txt")
+    #     print(f"Saving to {fn_to}")
+    #     fn_tos += [fn_to]
+    #     setlistfile2setlistsfile(fn, fn_to, start={1,3}, stop={2,4}, margin=5, symbol_ordenings=symbol_ordenings)
 
-plt.show()
+    ##############################################
 
-print(1)
+    # # train event alignment
+    # # train_event_series_alignment(fn_tos, param_dict, n_iter, models_folder, file_name_apnea, file_name_hypopnea)
+    # with open(models_folder / (file_name_apnea), 'rb') as file:
+    #     es_apnea = pickle.load(file)
+    # with open(models_folder / (file_name_hypopnea), 'rb') as file:
+    #     es_hypopnea = pickle.load(file)
+    #
+    # # warp test data with model
+    # make_test_set(fns_test, items_smooth_folder, symbol_ordenings=symbol_ordenings)
+    # files_test_data = [items_smooth_folder / 'test_data.txt']
+    # # warp_test_data_with_model(files_test_data, param_dict, n_iter, es_apnea, es_hypopnea, models_folder, file_name_apnea_model, file_name_hypopnea_model)
+    # with open(models_folder / file_name_apnea_model, 'rb') as file:
+    #     es_apnea_model = pickle.load(file)
+    # with open(models_folder / file_name_hypopnea_model, 'rb') as file:
+    #     es_hypopnea_model = pickle.load(file)
+
+    ##############################################
+
+    # # evaluation on test data set
+    # diff_series = series_to_diff_series(es_apnea_model.warped_series, symbol_ordenings)
+    # es_apnea_model.diff_series = diff_series
+
+    # with (items_smooth_folder / 'test_data_labels.txt').open('r') as file:
+    #     labels_test = np.array(eval(file.read()))
+    # print("----------apnea model-------------")
+    # do_evaluations(labels_test, es_apnea_model, 'apnea', 1, items_folder, items_smooth_folder)
+    # plt.show()
+
+    ##############################################
+
+    # evaluation on individual file
+    ## train clf on test set data
+    with open(models_folder / file_name_apnea_model, 'rb') as file:
+        model = pickle.load(file)
+    x = np.sign(model.warped_series)
+    x = x.reshape((len(x), -1))
+    with (items_smooth_folder / 'test_data_labels.txt').open('r') as file:
+        y = np.array(eval(file.read()))
+    clf = RFC(min_samples_leaf=30, max_features=100, n_estimators=100)
+    clf.fit(x, y)
+
+    ## evaluate on file
+    folder_test_files = Path(r"C:\Users\dries\python projects\itemsets_multilabeled")
+    files = [folder_test_files / i for i in os.listdir(folder_test_files) if (i.endswith('itemsets.txt'))]
+    for i in files[1::5]:
+        brt_file = [j for j in uza_multilabeled_single_files if str(i.parts[-1]).replace('_itemsets.txt','') in j][0]
+        pred = predict_apnea_per_file(i, clf, model, uza_multilabeled_single_files[brt_file])
+
+    print(1)
