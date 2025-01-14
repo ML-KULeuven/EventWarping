@@ -70,15 +70,16 @@ class Window(ABC):
 
     @classmethod
     def wrap(cls, object):
-        if isinstance(object, Window):
-            return object
-        if type(object) is int:
-            return StaticWindow(object)
-        if type(object) in [list, tuple] and len(object) == 2:
-            return StaticWindow(*object)
-        if type(object) in [list, tuple] and 2 < len(object) <= 4:
-            return LinearScalingWindow(*object)
-        raise ValueError(f"Unknown value type for a window: {object} ({type(object)}")
+        return object
+        # if isinstance(object, Window):
+        #     return object
+        # if type(object) is int:
+        #     return StaticWindow(object)
+        # if type(object) in [list, tuple] and len(object) == 2:
+        #     return StaticWindow(*object)
+        # if type(object) in [list, tuple] and 2 < len(object) <= 4:
+        #     return LinearScalingWindow(*object)
+        # raise ValueError(f"Unknown value type for a window: {object} ({type(object)}")
 
 
 class StaticWindow(Window):

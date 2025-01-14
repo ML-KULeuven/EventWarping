@@ -1,3 +1,5 @@
+from typing import Iterable
+
 import pytest
 import numpy as np
 import matplotlib as mpl
@@ -9,6 +11,7 @@ from eventwarping.eventseries import EventSeries
 from eventwarping.constraints import *
 from eventwarping.window import StaticWindow, MultipleWindow
 
+from src.eventwarping.window import Window, LinearScalingWindow
 
 # If environment variable TESTDIR is set, save figures to this
 # directory, otherwise to the test directory

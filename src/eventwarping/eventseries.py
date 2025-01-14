@@ -459,6 +459,7 @@ class EventSeries:
         self._factors = 1 - np.log2(np.divide(1, ws_sum)) / max_entropy
         self._factors[np.isinf(self._factors)] = 1
         ws = ws * self._factors[:, np.newaxis, :]
+        self.ws = ws
         c = ws.sum(axis=0)
 
         # Sliding window to aggregate from neighbours
@@ -763,7 +764,7 @@ class EventSeries:
             self._warped_series_ec = self._warped_series.max(axis=2)
 
         assert self._warped_series.shape[0] == self.nb_series
-        ws, wsec, converged = self.align_series(self._warped_series, self._warped_series_ec)
+        ws, wsec, converged, costs = self.align_series(self._warped_series, self._warped_series_ec)
 
         self._converged = None if converged is False else self._versions[V_WS]
         self._warped_series = ws
@@ -802,6 +803,8 @@ class EventSeries:
         wss_all = np.einsum('kji,ij->kj', series, self.warping_directions)
         wsi_all = np.einsum('kji,ij->kj', series, self._warping_inertia)
 
+        total_costs = np.zeros(nb_series)
+        attr_costs = np.zeros(nb_series)
         for sei in range(nb_series):
             wss = wss_all[sei]
             wsi = wsi_all[sei]
@@ -901,7 +904,16 @@ class EventSeries:
                 ws[sei, i_to, :] = ws[sei, i_to, :] + series[sei, i_from, :]
                 wsec[sei, i_to] = wsec[sei, i_to] + series_ec[sei, i_from]
 
-        return ws, wsec, converged
+            total_costs[sei] = np.min(cc[len(wss) - 1])
+            attr_costs[sei] = -np.sum(np.abs(wss) * (np.array(path)[:,1]!=np.arange(1,len(path)+1)))
+        total_costs = np.sum(total_costs)
+        attr_costs = np.sum(attr_costs)
+        dist = np.mean(ws, axis=0) + 10**(-20)
+        dist = dist / np.sum(dist, axis=0)
+        entropy = -np.sum(dist*np.log(dist))
+        print([total_costs, attr_costs, entropy])
+
+        return ws, wsec, converged, [total_costs, attr_costs, entropy]
 
     def align_series_times(self, series, series_ec=None, iterations=1):
         """Align events in the given series based on the previously computed gradients.
@@ -912,14 +924,17 @@ class EventSeries:
         See align_series for more information.
         """
         converged = None
+        total_costs = []
         for idx in range(iterations):
-            series, series_ec, converged = self.align_series(series, series_ec)
+            series, series_ec, converged, total_costs_it = self.align_series(series, series_ec)
+            total_costs += [list(total_costs_it)]
             if converged is True:
                 converged = idx
                 # print(f"Stopped after {converged=}")
                 break
             else:
                 converged = None
+        total_costs = np.array(total_costs)
         return series, series_ec, converged
 
     @property
@@ -1194,7 +1209,6 @@ class EventSeries:
             ax.set_title(title)
 
         ax = axs[2]
-        im = self.get_smoothed_counts(window=5, ignore_merged=True, filter_symbols=filter_symbols, filter_series=filter_series)
         thr = np.quantile(im, 0.9)
         im[im < thr] = 0
         ax.imshow(im)

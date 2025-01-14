@@ -16,7 +16,7 @@ def setlistfile2setlists(fn, start, stop, margin, symbol_ordenings=None):
     """Translate one sequence of sets into a number of
     sequences based on begin and end symbols.
 
-    :param fn: Filename or Path object
+    :param fn: Filename or Path objectsetlistfile2setlistsfile
     :param start: Set of start symbols
     :param stop: Set of stop symbols
     :param margin: Number of sets to include before the start
@@ -70,7 +70,7 @@ def smooth_series(series, symbol_ordenings):
 
     e.g.,   symbol_partition = [[1,2,3]]
             series = [[{0,2},{5},{1},{},{3}]]
-            outputs [[{0,2},{5},{1,2},{2},{2,3}]] as 2 should be between 1 and 3
+            outputs [[{0,2},{5},{1,2},{2},{3}]] as 2 should be between 1 and 3
 
     :param series: An event series
     :param symbol_ordenings: List of lists of ordered items
