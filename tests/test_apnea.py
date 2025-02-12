@@ -37,7 +37,7 @@ def test_example1():
     for i in range(3):
         print(f"=== {i+1:>2} ===")
         es.compute_warping_directions()
-        fig, axs = es.plot_directions(symbol={3,4,5}, seriesidx=2)
+        fig, axs = es.plot_rewards(symbol={3, 4, 5}, seriesidx=2)
         fig.savefig(directory / f"gradients_{i}.png", bbox_inches='tight')
         plt.close(fig)
         es.compute_warped_series()
@@ -65,7 +65,7 @@ def test_example1_v2():
     for i in range(20):
         print(f"=== {i+1:>2} ===")
         es.compute_warping_directions()
-        es.plot_directions(symbol={3,4,5}, seriesidx=2, filename=str(directory / f"gradients_{i}.png"))
+        es.plot_rewards(symbol={3, 4, 5}, seriesidx=2, filename=str(directory / f"gradients_{i}.png"))
         es.compute_warped_series()
         print(es.format_warped_series())
         es.plot_symbols(filename=str(directory / f"symbols_{i}.png"))

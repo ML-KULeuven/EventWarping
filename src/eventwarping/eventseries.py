@@ -46,8 +46,9 @@ class EventSeries:
         self._factors = None
         self._rescaled_counts = None
         self._smoothed_counts = None
-        self._warping_directions = None
-        self._warping_inertia = None
+        self.gradients = None
+        self.reward_backward = None
+        self.reward_forward = None
         self._zero_crossings = None
         self._warped_series: Optional[npt.NDArray[np.int]] = None
         self._warped_series_ec: Optional[npt.NDArray[np.int]] = None  # Event counts
@@ -57,6 +58,7 @@ class EventSeries:
         self._loglikelihoods_n = None
         self._versions = [0, 0, 0, 0]  # V_WC, V_RC, V_WD, V_WS
         self.constraints = constraints
+        self.costs = []
         if self.constraints is not None:
             for constraint in self.constraints:
                 constraint.es= self
@@ -64,7 +66,9 @@ class EventSeries:
     def reset(self):
         self._windowed_counts = None
         self._rescaled_counts = None
-        self._warping_directions = None
+        self.gradients = None
+        self.reward_backward = None
+        self.reward_forward = None
         self._warped_series = None
         self._warped_series_ec = None
         self._converged = None
@@ -74,7 +78,7 @@ class EventSeries:
         """Update derived properties after the series changed."""
         if self.constraints is not None:
             for constraint in self.constraints:
-                constraint.es_apnea = self
+                constraint.es = self
 
     def warp(self, iterations=10, restart=False, plot=None, window=None):
         for _ in self.warp_yield(iterations=iterations, restart=restart, plot=plot, window=window):
@@ -108,10 +112,10 @@ class EventSeries:
                     break
             self.compute_windowed_counts()
             self.compute_rescaled_counts()
-            self.compute_warping_directions()
+            self.compute_rewards()
             if plot is not None:
-                fig, axs = self.plot_directions(symbol=plot.get("symbol", None),
-                                                seriesidx=plot.get("seriesidx", None))
+                fig, axs = self.plot_rewards(symbol=plot.get("symbol", None),
+                                             seriesidx=plot.get("seriesidx", None))
                 fig.savefig(plot['filename'].format(iteration=it, it=it), bbox_inches='tight')
                 plt.close(fig)
             self.compute_warped_series()
@@ -157,7 +161,7 @@ class EventSeries:
 
     @classmethod
     def from_setlistfiles(cls, fns, window, intonly=False, selected=None,
-                          constraints=None, max_series_length=None, model: 'EventSeries' = None):
+                          constraints=None, max_series_length=None, model: 'EventSeries'=None, n_iter=None):
         """Read a list of setlist file and create an eventwarping object.
         A file where each line is a list of sets of symbols (using Python syntax).
         Each set represents a time point.
@@ -466,17 +470,13 @@ class EventSeries:
         if window > 1:
             sides = int((window - 1) / 2)
             wc = np.zeros((self.nb_symbols, self.nb_events))
-            # w = np.lib.stride_tricks.sliding_window_view(ws, (self.nb_series, window), (0, 1))
-            # wc[:, sides:-sides] = w.sum(axis=(-2, -1))[0].T
             w = np.lib.stride_tricks.sliding_window_view(c, (window,), axis=(0,))
             wc[:, sides:-sides] = w.sum(axis=2).T
             # Pad the beginning and ending with the same values (having half a window can lower the count)
             wc[:, :sides] = wc[:, sides:sides+1]
             wc[:, -sides:] = wc[:, -sides-1:-sides]
             # Add without a window (otherwise the begin and end cannot differentiate)
-            # c = ws.sum(axis=0).T
             self._windowed_counts = np.add(wc, c.T) / 2
-            # self._windowed_counts = wc
         else:
             self._windowed_counts = c.T
 
@@ -541,30 +541,28 @@ class EventSeries:
             plt = None
         if window is not None:
             self.window = window
-        self.compute_warping_directions()
+        self.compute_rewards()
         self._versions[V_WS] += 1  # Do not change warping
         if plot is not None:
-            fig, axs = self.plot_directions(symbol=plot.get("symbol", None),
-                                            seriesidx=plot.get("seriesidx", None))
+            fig, axs = self.plot_rewards(symbol=plot.get("symbol", None),
+                                         seriesidx=plot.get("seriesidx", None))
             fig.savefig(plot['filename'], bbox_inches='tight')
             plt.close(fig)
 
-    def compute_warping_directions(self):
+    def compute_gradients(self):
         """
-        Directions in which each series time point should change.
+        Gradient of density for each item
 
-        We use the windowed counts as the density function and use the derivative
-        as the direction.
+        We use the windowed counts as the density function and use the difference as gradient
 
         Computes the following properties:
-        - warping_directions
-        - warping_inertia
+        - gradients
         - smoothed_counts (only used for plotting/debugging)
 
         Requires:
         - rescaled_counts
 
-        :return: warping directions (also stored in self.warping_directions)
+        :return: warping gradients (also stored in self.gradients)
         """
         # If windowed_counts has not yet been recomputed, do so
         if self._versions[V_WD] == self._versions[V_RC]:
@@ -577,8 +575,6 @@ class EventSeries:
         kernel_side = window // 2
         kernel_width = int(kernel_side * 2 + 1)
         kernel = signal.windows.hann(kernel_width)  # make sure to be uneven to be centered
-        # kernel = np.vstack([kernel] * 2)  # kernel per symbol
-        # kernel = np.ones(kernel_width) / kernel_width  # make sure to be uneven to be centered
 
         # Convolve kernel
         counts = self._rescaled_counts
@@ -587,90 +583,50 @@ class EventSeries:
             countsf[si, :] = signal.convolve(counts[si, :], kernel, mode='same') / sum(kernel)
         self._smoothed_counts = countsf
 
-        # Compensate for edge effects
-        # (this currently overcompensates and is worse, the windowed counting already compensates)
-        # shape = list(self._windowed_counts.shape)
-        # shape[1] += kernel_side * 2
-        # counts = np.zeros(shape)
-        # counts[:, :kernel_side] = self._windowed_counts[:, 0:1]
-        # counts[:, kernel_side:-kernel_side] = self._windowed_counts[:, :]
-        # counts[:, -kernel_side:] = self._windowed_counts[:, -1:None]
-        # # counts = self._windowed_counts
-        # countsf = np.zeros(self._windowed_counts.shape)
-        # for si in range(countsf.shape[0]):
-        #     countsf[si, :] = signal.convolve(counts[si, :], kernel, mode='valid') / sum(kernel)
-        # self._smoothed_counts = countsf
+        gradients = np.diff(countsf)
+        self.gradients = np.round(gradients, int(10 - np.floor(
+            np.log10(np.max(np.abs(gradients))))))  # round 10 orders of magnitude
+        return self.gradients
 
-        gradients = np.gradient(countsf, axis=1, edge_order=1)
-        # kernel sides are underestimated because events are empty beyond bounds, correct for this in the gradient
-        # (overcompensates and is worse)
-        # gradients[:, :kernel_side] = np.tile(gradients[:, kernel_side:kernel_side+1], (1, kernel_side))
-        # gradients[:, -kernel_side:None] = np.tile(gradients[:, -kernel_side:-kernel_side+1], (1, kernel_side))
 
-        # Transform gradients into directions (and magnitude)
-        # divide by 2 for the gradient function (edge_order=1)
-        # divide by kernel_width for convolve function
-        if not self.rescale_active:
-            part = self.count_thr / (2 * kernel_width)  # threshold
-            self._warping_directions = gradients / part
-        else:
-            self._warping_directions = gradients
-        # The warping direction only expresses the direction using the sign. The
-        # number is the weight whether this move should be preferred. But every
-        # move is just one step (otherwise it overshoots peaks).
+    def compute_rewards(self):
+        """
+        Computes forward and backward rewards for each item.
 
-        # Only retain large enough directions (depends on self.count_thr)
-        # self._warping_directions[~((self._warping_directions > 1) | (self._warping_directions < -1))] = 0
+        Computes the following properties:
+        - reward_forward
+        - reward_backward
 
-        # Warping should not be beyond peak in gradients? Makes the
-        # symbols swap and will not converge
-        # We avoid contractions (this is when the gradients are pos and then neg)
-        conti = np.where(np.diff(np.sign(self._warping_directions)) == -2)
-        for idx, (r, c) in enumerate(zip(*conti)):
-            # Select the index where smoothed counts is a peak
-            if self._smoothed_counts[r, c] < self._smoothed_counts[r, c + 1]:
-                conti[1][idx] += 1
-        self._warping_directions[conti] = 0
-        # All zero crossings from pos to neg have inertia, we don't want to move them as they are already a peak
-        self._warping_inertia = np.zeros(self._warping_directions.shape)
-        conti = np.where(self._warping_directions == 0.0)
+        Requires:
+        - rescaled_counts
+
+        :return: reward_forward, reward_backward
+        """
+        self.compute_gradients()
+
+        self.reward_forward = np.zeros((self.nb_symbols, self.nb_events))
+        self.reward_forward[:,:-1] = self.gradients
+        self.reward_backward = np.zeros((self.nb_symbols, self.nb_events))
+        self.reward_backward[:,1:] = - self.gradients
+
+        # Increase backward reward of all (but the first) items in a flat density peak
+        conti = np.where(self.reward_backward == 0.0)
         lastr, lastc = -1, -1
         for r, c in zip(*conti):
             if r == lastr and c <= lastc:
                 continue
-            if c == 0 or c == self._warping_directions.shape[1] - 1:
+            if c == 0 or c == self.nb_events - 1:
                 continue
             lastc = c + 1
-            while lastc < self._warping_directions.shape[1] and self._warping_directions[r, lastc] == 0:
+            while lastc < self.nb_events and self.reward_backward[r, lastc] == 0:
                 lastr = r
                 lastc += 1
-            if self._warping_directions[r, c - 1] > 0 > self._warping_directions[r, lastc]:
-                self._warping_inertia[r, c] = max(self._warping_directions[r, c - 1],
-                                                  -self._warping_directions[r, lastc])
-                self._warping_directions[r, c + 1:lastc] = self._warping_directions[r, lastc]
-
-        # Gradients seem to work better than counts (link to gravity analogy?)
-        # self._warping_directions = np.einsum('ij,ij->ij', np.sign(self._warping_directions), countsf)
-        # self._warping_inertia = np.einsum('ij,ij->ij', np.sign(self._warping_inertia), countsf) / 2
-
-        # Threshold values (set small gradients to zero)
-        # threshold = np.quantile(np.abs(self._warping_directions), 0.1)
-        # self._warping_directions[np.abs(self._warping_directions) <= threshold] = 0
+            if self.reward_backward[r, c - 1] < 0 < self.reward_backward[r, lastc]:
+                epsilon = np.min(np.abs(self.gradients[self.gradients!=0]))
+                self.reward_backward[r, (c+1):lastc] += epsilon
 
         self._versions[V_WD] += 1
-        return self._warping_directions
-
-    @property
-    def warping_directions(self):
-        if self._warping_directions is not None:
-            return self._warping_directions
-        return self.compute_warping_directions()
-
-    @property
-    def warping_inertia(self):
-        if self._warping_inertia is not None:
-            return self._warping_inertia
-        return self.compute_warping_directions()
+        return self.reward_forward, self.reward_backward
 
     def get_symbol_information(self):
         """
@@ -714,29 +670,6 @@ class EventSeries:
         path.reverse()
         return path
 
-        # for r in reversed(range(cc.shape[0] - 1)):
-        #     if prev_c == 0:
-        #         prev_c, cost = 1, cc[r, 1]
-        #         if cc[r, 0] < cost:
-        #             prev_c, cost = 0, cc[r, 0]
-        #     elif prev_c == 1:
-        #         prev_c, cost = 1, cc[r, 1]
-        #         if cc[r, 0] < cost:
-        #             prev_c, cost = 0, cc[r, 0]
-        #         if cc[r, 2] < cost:
-        #             prev_c, cost = 2, cc[r, 2]
-        #     elif prev_c == 2:
-        #         prev_c, cost = 1, cc[r, 1]
-        #         if cc[r, 2] < cost:
-        #             prev_c, cost = 2, cc[r, 2]
-        #         if cc[r, 0] < cost:
-        #             prev_c, cost = 0, cc[r, 0]
-        #     else:
-        #         raise Exception(f"{prev_c=}")
-        #     path.append((r, r + prev_c - 1))
-        # path.reverse()
-        # return path
-
     def _allow_merge(self, merged_cnts_s, merged_cnts_e, a, b):
         if self.constraints is None:
             return True
@@ -753,13 +686,12 @@ class EventSeries:
         - warped_series
 
         Requires:
-        - warping_directions
-        - warping_inertia
+        - forward and backward rewards
 
         """
-        # If warping_directions has not yet been recomputed, do so
+        # If rewards have not yet been recomputed, do so
         if self._versions[V_WD] == self._versions[V_WS]:
-            self.compute_warping_directions()
+            self.compute_rewards()
         if self._warped_series_ec is None:
             self._warped_series_ec = self._warped_series.max(axis=2)
 
@@ -770,6 +702,7 @@ class EventSeries:
         self._warped_series = ws
         self._warped_series_ec = wsec
         self._versions[V_WS] += 1
+        self.costs += [costs]
         return self._warped_series
 
 
@@ -799,15 +732,16 @@ class EventSeries:
         scs = np.zeros((self.nb_events, 3, self.nb_symbols), dtype=int)  # summed counts symbols
         sce = np.zeros((self.nb_events, 3), dtype=int)  # summed counts events
 
-        # Aggregated directions and inertia
-        wss_all = np.einsum('kji,ij->kj', series, self.warping_directions)
-        wsi_all = np.einsum('kji,ij->kj', series, self._warping_inertia)
+        # TODO: still written as costs instead of rewards:
+        # Aggregated costs
+        wss_all_backward = - np.einsum('kji,ij->kj', series, self.reward_backward)
+        wss_all_forward = - np.einsum('kji,ij->kj', series, self.reward_forward)
 
         total_costs = np.zeros(nb_series)
         attr_costs = np.zeros(nb_series)
         for sei in range(nb_series):
-            wss = wss_all[sei]
-            wsi = wsi_all[sei]
+            wssb = wss_all_backward[sei]
+            wssf = wss_all_forward[sei]
 
             # Initialize datastructures
             cc[:, :] = 0
@@ -818,7 +752,7 @@ class EventSeries:
             # Initialize first row
             cc[0, 0] = np.inf   # First element cannot move backward
             cc[0, 1] = 0
-            cc[0, 2] = -wss[0]
+            cc[0, 2] = wssf[0]
             ps[0, :] = [0, 1, 2]
             scs[0, 0, :] = 0
             scs[0, 1, :] = series[sei, 0, :]
@@ -826,11 +760,11 @@ class EventSeries:
             sce[0, 0] = 0
             sce[0, 1] = series_ec[sei, 0]
             sce[0, 2] = sce[0, 1]
-            for i in range(1, len(wss)):
+            for i in range(1, len(wssb)):
                 # Backward
                 #              Stay one behind
                 #              |           Move on back from diagonal
-                #              |           |             Cost to move backward is the positive gradient
+                #              |           |             Cost to move backward
                 # cc[i, 0] = min(cc[i-1, 0], cc[i-1, 1]) + wss[i]
                 cc[i, 0] = np.inf
                 ps[i, 1] = -1
@@ -850,13 +784,12 @@ class EventSeries:
                         ps[i, 0] = prevs
                         scs[i, 0] = merged_cnts_s
                         sce[i, 0] = merged_cnts_e
-                cc[i, 0] += wss[i]
+                cc[i, 0] += wssb[i]
                 # Stay
                 #              Move back to diagonal from one behind
                 #              |           Stay on diagonal
                 #              |           |           Move to diagonal from one ahead (thus stay)
-                #              |           |           |                Inertia (reward for staying)
-                # cc[i, 1] = min(cc[i-1, 0], cc[i-1, 1], cc[i-1, 2]) - wsi[i]
+                # cc[i, 1] = min(cc[i-1, 0], cc[i-1, 1], cc[i-1, 2])
                 cc[i, 1] = np.inf
                 ps[i, 1] = -1
                 for prevs in [1, 0, 2]:
@@ -875,13 +808,13 @@ class EventSeries:
                         ps[i, 1] = prevs
                         scs[i, 1] = merged_cnts_s
                         sce[i, 1] = merged_cnts_e
-                cc[i, 1] += -wsi[i]
+                    cc[i, 1] += 0
                 # Forward
                 #              Skip diagonal and move from one back for previous to one ahead for this one
                 #              |           Move one forward from diagonal
                 #              |           |           Stay one forward
-                #              |           |           |             Cost to move forward is the negative gradient
-                # cc[i, 2] = min(cc[i-1, 0], cc[i-1, 1], cc[i-1, 2]) + -wss[i]
+                #              |           |           |             Cost to move forward
+                # cc[i, 2] = min(cc[i-1, 0], cc[i-1, 1], cc[i-1, 2]) + wssf[i]
                 cc[i, 2] = np.inf
                 ps[i, 2] = -1
                 for prevs in [1, 0, 2]:
@@ -890,8 +823,8 @@ class EventSeries:
                         ps[i, 2] = prevs
                         scs[i, 2] = series[sei, i, :]
                         sce[i, 2] = series_ec[sei, i]
-                cc[i, 2] += -wss[i]
-            cc[len(wss) - 1, 2] = np.inf  # Last element cannot move forward
+                cc[i, 2] += wssf[i]
+            cc[len(wssb) - 1, 2] = np.inf  # Last element cannot move forward
             path = self._best_warped_path(cc, ps)
             if path is None:
                 print(f"No path found for series {sei}")
@@ -904,16 +837,17 @@ class EventSeries:
                 ws[sei, i_to, :] = ws[sei, i_to, :] + series[sei, i_from, :]
                 wsec[sei, i_to] = wsec[sei, i_to] + series_ec[sei, i_from]
 
-            total_costs[sei] = np.min(cc[len(wss) - 1])
-            attr_costs[sei] = -np.sum(np.abs(wss) * (np.array(path)[:,1]!=np.arange(1,len(path)+1)))
+            total_costs[sei] = np.min(cc[len(wssb) - 1])
+            attr_costs[sei] = -np.sum(np.abs(wssb) * (np.array(path)[:,1]!=np.arange(1,len(path)+1)))
         total_costs = np.sum(total_costs)
         attr_costs = np.sum(attr_costs)
-        dist = np.mean(ws, axis=0) + 10**(-20)
+        dist = np.mean(np.sign(ws), axis=0) + 10**(-20)
+        entropy2 = -np.sum(dist*np.log(dist))
         dist = dist / np.sum(dist, axis=0)
         entropy = -np.sum(dist*np.log(dist))
         print([total_costs, attr_costs, entropy])
 
-        return ws, wsec, converged, [total_costs, attr_costs, entropy]
+        return ws, wsec, converged, [total_costs, attr_costs, entropy, entropy2]
 
     def align_series_times(self, series, series_ec=None, iterations=1):
         """Align events in the given series based on the previously computed gradients.
@@ -924,17 +858,13 @@ class EventSeries:
         See align_series for more information.
         """
         converged = None
-        total_costs = []
         for idx in range(iterations):
             series, series_ec, converged, total_costs_it = self.align_series(series, series_ec)
-            total_costs += [list(total_costs_it)]
             if converged is True:
                 converged = idx
-                # print(f"Stopped after {converged=}")
                 break
             else:
                 converged = None
-        total_costs = np.array(total_costs)
         return series, series_ec, converged
 
     @property
@@ -965,7 +895,6 @@ class EventSeries:
         """
         self._loglikelihoods_p = np.divide(np.add(np.sign(self._warped_series).sum(axis=0), laplace_smoothing),
                                            self.nb_series + 2*laplace_smoothing)
-        # self._loglikelihoods_p = self._loglikelihoods_p / np.mean(self._loglikelihoods_p, axis=0) * 0.5
         self._loglikelihoods_n = np.log(1.0 - self._loglikelihoods_p)
         self._loglikelihoods_p = np.log(self._loglikelihoods_p)
 
@@ -1086,7 +1015,7 @@ class EventSeries:
             s += "\n"
         return s
 
-    def plot_directions(self, symbol=0, seriesidx=None, filename=None):
+    def plot_rewards(self, symbol=0, seriesidx=None, filename=None):
         """Plot the currently computed properties used to guide the warping.
 
         :param symbol: Add plots for the given symbol or list of symbols
@@ -1114,21 +1043,23 @@ class EventSeries:
         nrows += 1
         if seriesidx is not None:
             nrows += 2*len(seriesidx)
-            wss, wsi = [], []
+            wssf, wssb = [], []
             for si in range(len(seriesidx)):
-                wss.append(np.multiply(self.warped_series[seriesidx[si], :, :].T, self.warping_directions).sum(axis=0))
-                wsi.append(np.multiply(self.warped_series[seriesidx[si], :, :].T, self.warping_inertia).sum(axis=0))
+                wssf.append(np.multiply(self.warped_series[seriesidx[si], :, :].T, self.reward_forward).sum(axis=0))
+                wssb.append(np.multiply(self.warped_series[seriesidx[si], :, :].T, self.reward_backward).sum(axis=0))
         else:
-            wss = None
-            wsi = None
+            wssf = None
+            wssb = None
+
         fig, axs = plt.subplots(nrows=nrows, ncols=len(symbol), sharex=True, sharey='row',
                                 figsize=(5*len(symbol), 4+len(seriesidx)))
         cnts = self.get_counts(ignore_merged=True)
-        # colors = mpl.cm.get_cmap().colors
         colors = [c["color"] for c in mpl.rcParams["axes.prop_cycle"]]
-        # amp = np.max(np.abs(self.warping_directions[list(symbol)]))
+
+        # plots per item
         for curidx, cursymbol in enumerate(symbol):
             curcnts = cnts[cursymbol]
+
             # Counts
             axrow = 0
             ax = axs[axrow, curidx] if len(symbol) > 1 else axs[axrow]
@@ -1138,32 +1069,32 @@ class EventSeries:
             if curidx == 0:
                 ax.legend(bbox_to_anchor=(-0.1, 1), loc='upper right')
             axrow += 1
+
             # Scaled counts
             ax = axs[axrow, curidx] if len(symbol) > 1 else axs[axrow]
             ax.plot(self._rescaled_counts[cursymbol], '-o', color=colors[2], label="Rescaled counts")
             ax.plot(self._smoothed_counts[cursymbol], '-o', color=colors[3], label="Smoothed counts")
-
             if curidx == 0:
                 ax.legend(bbox_to_anchor=(-0.1, 1), loc='upper right')
             axrow += 1
-            # Directions (gradients)
+
+            # Gradients and rewards
             ax = axs[axrow, curidx] if len(symbol) > 1 else axs[axrow]
             ax.axhline(y=0, color='r', linestyle=':', alpha=0.3)
-            # ax.axhline(y=1, color='b', linestyle=':', alpha=0.3)
-            # ax.axhline(y=-1, color='b', linestyle=':', alpha=0.3)
-            ax.plot(self._warping_directions[cursymbol], '-o', color=colors[4], label="Directions")
-            ax.plot(self._warping_inertia[cursymbol], '-o', color=colors[5], label="Inertia")
-            # ax.set_ylim(-amp, amp)
+            ax.plot(self.gradients[cursymbol], '-o', color=colors[4], label="Gradients")
+            ax.plot(self.reward_forward[cursymbol], '-o', color=colors[4], label="Forward rewards")
+            ax.plot(self.reward_forward[cursymbol], '-o', color=colors[4], label="Backward rewards")
             if curidx == 0:
                 ax.legend(bbox_to_anchor=(-0.1, 1), loc='upper right')
             axrow += 1
+
             # Counts in given series
             if seriesidx is not None:
                 for si in range(len(seriesidx)):
                     ax = axs[axrow, curidx] if len(symbol) > 1 else axs[axrow]
                     ax.axhline(y=0, color='r', linestyle=':', alpha=0.3)
-                    ax.plot(wss[si], '-+', color=colors[4], label=f"Agg directions for series {seriesidx[si]}")
-                    ax.plot(wsi[si], '-+', color=colors[5], label=f"Agg Inertia for series {seriesidx[si]}")
+                    ax.plot(wssf[si], '-+', color=colors[4], label=f"Agg forward rewards for series {seriesidx[si]}")
+                    ax.plot(wssb[si], '-+', color=colors[5], label=f"Agg backward rewards for series {seriesidx[si]}")
                     if curidx == 0:
                         ax.legend(bbox_to_anchor=(-0.1, 1), loc='upper right')
                     axrow += 1
@@ -1173,6 +1104,7 @@ class EventSeries:
                     if curidx == 0:
                         ax.legend(bbox_to_anchor=(-0.1, 1), loc='upper right')
                     axrow += 1
+
         if filename is not None:
             fig.savefig(filename, bbox_inches='tight')
             plt.close(fig)
